@@ -336,7 +336,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         }
 
         // 🚫 Omitir los procesos cuya fecha es IGUAL o MAYOR a la fecha mayor global
-        if (fechaObj.getTime() >= fechaMayor.getTime()) {
+        if (fechaObj.getTime() < fechaMayor.getTime()) {
           omitidos++;
           continue;
         }
