@@ -31,7 +31,7 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL") {
 
   while (true) {
     try {
-      // 🔁 Rebuscar la fila en cada ciclo (evita referencias muertas tras refresh AJAX)
+      // 🔁 Rebuscar la fila en cada ciclo (nunca usar handles antiguos)
       const filas = await page.$$("#myTable tbody tr");
       let filaObjetivo = null;
 
@@ -49,29 +49,34 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL") {
         continue;
       }
 
-      // 📖 Leer la celda 10 (estado)
+      // 🧩 Leer la columna de estado sin usar $eval (evita pérdida de contexto)
       const celdas = await filaObjetivo.$$("td");
       estado = ((await celdas[9].innerText()) || "").trim();
 
-      // ✅ Detectar fin
+      // ✅ Detectar finalización
       if (["Completado", "Error"].includes(estado)) {
         logConsole(`📌 Estado final de "${descripcion}": ${estado}`, runId);
         return estado;
       }
 
       logConsole(`🔁 "${descripcion}" sigue en estado: ${estado || "N/A"} → esperando...`, runId);
-
     } catch (err) {
-      logConsole(`⚠️ Error leyendo estado de "${descripcion}": ${err.message}`, runId);
+      // ⚠️ Si Playwright pierde contexto del DOM, solo reintenta
+      if (err.message.includes("Cannot find context")) {
+        logConsole(`⚠️ Contexto DOM perdido (refresh parcial detectado). Reintentando lectura de "${descripcion}"...`, runId);
+      } else {
+        logConsole(`⚠️ Error leyendo estado de "${descripcion}": ${err.message}`, runId);
+      }
     }
 
-    // 🕒 Esperar 30 segundos antes de volver a leer
+    // ⏱️ Esperar 30 segundos antes de volver a intentar
     await page.waitForTimeout(30000);
-
     intentos++;
+
+    // 🔁 Mensaje informativo cada 60 ciclos (30 min)
     if (intentos % 60 === 0) {
-      const horas = (intentos / 2 / 60).toFixed(1);
-      logConsole(`⏳ "${descripcion}" lleva ${horas}h esperando — sigue en ${estado}`, runId);
+      const horas = (intentos * 30) / 3600;
+      logConsole(`⏳ "${descripcion}" lleva ${(horas).toFixed(1)}h en espera — sigue en ${estado}`, runId);
     }
   }
 }
