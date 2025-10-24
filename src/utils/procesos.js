@@ -577,6 +577,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
       // --- Omitir filas F4 con fecha menor ---
       // --- Omitir filas F4 con fecha menor ---
+      // ============================================================
+      // 🧩 Control de fechas F4 — flujo dual (normal y especial)
+      // ============================================================
       if (sistema.toUpperCase() === "F4") {
         const fechasF4 = [];
         for (const f of filas) {
@@ -592,9 +595,33 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         if (fechasF4.length > 0) {
           const fechaMayor = fechasF4.reduce((a, b) => (a > b ? a : b));
           const fechaActual = parseFecha(fechaTxt);
-          if (fechaActual < fechaMayor) {
-            logConsole(`⏭️ [F4] ${descripcion} tiene fecha menor (${fechaTxt}) → omitido.`, runId);
+
+          // 🔹 Si la fecha actual es IGUAL a la mayor → activar modo especial (SQL)
+          if (fechaActual && fechaActual.getTime() === fechaMayor.getTime()) {
+            logConsole(`📆 [F4] ${descripcion}: FECHA MAYOR detectada (${fechaTxt}) → flujo SQL especial.`, runId);
+
+            const fechaParsed = parseFecha(fechaTxt);
+            const mesesOracle = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+            const fechaOracle = `${String(fechaParsed.getUTCDate()).padStart(2, "0")}-${mesesOracle[fechaParsed.getUTCMonth()]}-${fechaParsed.getUTCFullYear()}`;
+
+            if (f4FechasProcesadas.has(fechaOracle)) {
+              logConsole(`⚙️ [F4] Fecha mayor ${fechaOracle} ya fue procesada anteriormente — omitiendo.`, runId);
+            } else {
+              const resultadoF4 = await ejecutarF4FechaMayor(page, baseDatos, connectString, runId);
+              if (resultadoF4 === "F4_COMPLETADO_MAYOR") {
+                f4FechasProcesadas.add(fechaOracle);
+                f4Procesados.add(descripcion.toUpperCase());
+                await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
+                logConsole(`✅ [F4] Flujo FECHA MAYOR completado correctamente.`, runId);
+                filas = await page.$$("#myTable tbody tr");
+              }
+            }
+
+            // 👇 Continuar con siguiente fila, no bloquea otros procesos
             continue;
+          } else if (fechaActual && fechaActual.getTime() < fechaMayor.getTime()) {
+            // 🔹 Si la fecha es MENOR → mantener flujo normal (clics)
+            logConsole(`🖱️ [F4] ${descripcion}: fecha menor (${fechaTxt}) → flujo normal (clics).`, runId);
           }
         }
       }
