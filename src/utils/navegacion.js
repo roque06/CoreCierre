@@ -21,121 +21,36 @@ async function navegarConRetries(page, url, maxRetries = 3) {
 }
 
 /**
- * 🧠 Espera perpetuamente a que un proceso específico cambie
- * a estado "Completado" o "Error", sin usar timeout fijo.
- * Compatible con llamadas desde procesos.js (usa solo descripcion y runId).
- *
- * @param {import('playwright').Page} page - instancia Playwright
- * @param {string} descripcion - texto visible del proceso en la tabla
- * @param {string} runId - identificador global opcional
- * @returns {Promise<"Completado"|"Error"|"Desconocido">}
- */
-/**
- * 🧠 Monitorea perpetuamente un proceso hasta que cambie a "Completado" o "Error".
- * Si hay duplicados (misma descripción con distintas fechas), usa la fila con fecha más reciente.
+ * ⏳ Espera hasta que el proceso cambie a Completado o Error.
  */
 async function esperarCompletado(page, descripcion, runId = "GLOBAL") {
-  if (!descripcion) {
-    logConsole(`⚠️ esperarCompletado recibió descripción vacía`, runId);
-    return "Desconocido";
-  }
-
-  const filasSelector = `#myTable tbody tr:has-text("${descripcion}")`;
-  let estadoPrevio = "";
-  let iteraciones = 0;
-  const inicio = Date.now();
-
-  logConsole(`🕒 Iniciando monitoreo perpetuo para "${descripcion}"...`, runId);
+  const filaSelector = `tbody tr:has-text("${descripcion}")`;
+  let estado = "";
 
   while (true) {
     try {
-      await page.waitForSelector("#myTable tbody tr", { timeout: 60000 });
+      // 🔄 Refrescar la tabla en cada ciclo para obtener el estado real del backend
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
+      await page.waitForSelector("#myTable tbody tr", { timeout: 15000 });
 
-      // Buscar todas las filas que coincidan con la descripción
-      const filas = page.locator(filasSelector);
-      const totalFilas = await filas.count();
+      const fila = page.locator(filaSelector);
+      const estadoCell = fila.locator("td").nth(9);
+      estado = ((await estadoCell.textContent()) || "").trim();
 
-      if (totalFilas === 0) {
-        logConsole(`⚠️ Fila de "${descripcion}" no encontrada — posible recarga o cambio de DOM.`, runId);
-        await page.waitForTimeout(10000);
-        continue;
+      if (["Completado", "Error"].includes(estado)) {
+        logConsole(`📌 Estado final de "${descripcion}": ${estado}`, runId);
+        return estado;
       }
 
-      // Si hay duplicadas, usar la fila con la FECHA más reciente
-      let fila = totalFilas > 1 ? await seleccionarFilaMasReciente(page, filas) : filas.first();
-
-      // Leer estado visual actual
-      const celdaEstado = fila.locator("td:nth-child(10)").first();
-      const estadoDom = ((await celdaEstado.textContent()) || "")
-        .trim()
-        .toUpperCase();
-
-      // Registrar cambio
-      if (estadoDom !== estadoPrevio) {
-        logConsole(`📊 "${descripcion}" cambió estado: ${estadoPrevio || "N/A"} → ${estadoDom}`, runId);
-        estadoPrevio = estadoDom;
-      }
-
-      // Detectar estados finales
-      if (["COMPLETADO", "ERROR"].includes(estadoDom)) {
-        logConsole(`📌 Estado final de "${descripcion}": ${estadoDom}`, runId);
-        return estadoDom;
-      }
-
-      // Log periódico cada 10 minutos
-      iteraciones++;
-      if (iteraciones % 20 === 0) {
-        const mins = ((Date.now() - inicio) / 60000).toFixed(1);
-        logConsole(`⏳ "${descripcion}" sigue en ${estadoDom || "N/A"} tras ${mins} min...`, runId);
-      }
-
+      logConsole(`⏳ "${descripcion}" sigue en estado: ${estado || "N/A"} → esperando...`, runId);
     } catch (err) {
-      logConsole(`⚠️ Error monitoreando "${descripcion}": ${err.message}`, runId);
-
-      try {
-        const baseUrl = page.url().split("/ProcesoCierre")[0] || "";
-        await navegarConRetries(page, `${baseUrl}/ProcesoCierre/Procesar`);
-        logConsole(`🔁 Tabla recargada durante monitoreo de "${descripcion}".`, runId);
-      } catch (recErr) {
-        logConsole(`⚠️ Falló recarga durante monitoreo: ${recErr.message}`, runId);
-      }
+      logConsole(`⚠️ Error leyendo estado de "${descripcion}": ${err.message}`, runId);
     }
 
+    // 🕒 Esperar 30 segundos antes de volver a intentar
     await page.waitForTimeout(30000);
   }
 }
-
-/**
- * 🔍 Selecciona la fila más reciente (mayor fecha en columna 7)
- */
-/**
- * 🔍 Selecciona la fila más reciente (mayor fecha en columna 7)
- * y genera logs legibles sin HTML basura.
- */
-async function seleccionarFilaMasReciente(page, filas, runId = "GLOBAL") {
-  let filaMasReciente = filas.first();
-  let fechaMax = new Date(0);
-
-  const total = await filas.count();
-  for (let i = 0; i < total; i++) {
-    const filaTmp = filas.nth(i);
-    const fechaTxt = (await filaTmp.locator("td:nth-child(7)").textContent())?.trim() || "";
-    const [d, m, y] = fechaTxt.split("/").map(Number);
-    if (!d || !m || !y) continue;
-    const fechaObj = new Date(`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}T00:00:00`);
-    if (fechaObj > fechaMax) {
-      fechaMax = fechaObj;
-      filaMasReciente = filaTmp;
-    }
-  }
-
-  const descripcionTxt = (await filaMasReciente.locator("td:nth-child(5)").textContent())?.trim() || "N/D";
-  const fechaTxt = fechaMax.toLocaleDateString("es-ES");
-  logConsole(`⚙️ Duplicadas detectadas → usando "${descripcionTxt}" con fecha más reciente ${fechaTxt}`, runId);
-
-  return filaMasReciente;
-}
-
 
 
 /**
