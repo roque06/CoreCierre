@@ -478,10 +478,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
     if (!actual) {
       logConsole(`⚠️ [F4] ${descNorm}: no tiene fecha válida, se omite comparación.`, runId);
-      return false; // sin fecha → flujo normal
+      return false;
     }
 
-    // 🧮 Recolectar todas las fechas F4 válidas
     const fechasF4 = [];
     for (const f of filasActuales) {
       try {
@@ -490,30 +489,24 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         const fechaStr = (await f.$eval("td:nth-child(7)", el => el.innerText.trim())) || "";
         const val = parseFecha(fechaStr);
         if (val) fechasF4.push(val);
-      } catch { /* no-op */ }
+      } catch { }
     }
 
     if (fechasF4.length === 0) {
       logConsole(`⚠️ [F4] No hay fechas F4 válidas en la tabla.`, runId);
-      return false; // flujo normal
+      return false;
     }
 
-    // 🔍 Calcular la fecha mayor global entre todos los F4
     const fechaMayorGlobal = fechasF4.reduce((a, b) => (a > b ? a : b));
-
-    // 🧠 Comparar la fecha actual del proceso con la mayor global
     if (actual.getTime() === fechaMayorGlobal.getTime()) {
-      // 📅 El proceso tiene la fecha mayor → activar cursol
       guardarFechaF4Persistente(descNorm, fechaTxt);
       logConsole(`📆 [F4] ${descNorm} tiene la FECHA MAYOR (${fechaTxt}) → activar cursol.`, runId);
       return true;
     } else {
-      // ⏭️ El proceso tiene una fecha menor → seguir flujo normal
       logConsole(`ℹ️ [F4] ${descNorm}: su fecha (${fechaTxt}) no es la mayor (${fechaMayorGlobal.toLocaleDateString("es-ES")}) → continuar flujo normal.`, runId);
       return false;
     }
   }
-
 
   // ============================================================
   // 🚀 Recorrer todas las filas del sistema actual
@@ -535,11 +528,14 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       // ============================================================
       if (estado === "EN PROCESO") {
         logConsole(`⏸️ ${descripcion} está en proceso — esperando que finalice.`, runId);
-        const resultado = await esperarCompletado(page, descripcion, runId);
-        if (resultado === "Error") {
-          logConsole(`❌ ${descripcion} terminó con error — deteniendo ejecución.`, runId);
-          break;
+
+        // 🧩 Ajuste especial SOLO para F4 "Correr Calendario"
+        if (sistema === "F4" && descripcion.toUpperCase().includes("CORRER CALENDARIO")) {
+          await esperarCompletado(page, "Correr Calendario", runId, "F4");
+        } else {
+          await esperarCompletado(page, descripcion, runId, sistema);
         }
+
         continue;
       }
 
@@ -566,7 +562,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
             continue;
           }
         } else {
-          // ⏭️ No tiene fecha mayor → seguir flujo normal
           logConsole(`⏭️ [F4] ${descripcion} no tiene fecha mayor → ejecutando flujo normal.`, runId);
         }
       }
@@ -595,13 +590,18 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       await completarEjecucionManual(page, runId);
 
       // 🔁 Esperar cambio de estado en la tabla
-      const estadoFinal = await esperarCompletado(page, descripcion, runId);
-      logConsole(`📊 ${descripcion}: estado final = ${estadoFinal}`, runId);
+      if (sistema === "F4" && descripcion.toUpperCase().includes("CORRER CALENDARIO")) {
+        await esperarCompletado(page, "Correr Calendario", runId, "F4");
+      } else {
+        await esperarCompletado(page, descripcion, runId, sistema);
+      }
+
+      logConsole(`📊 ${descripcion}: estado final verificado.`, runId);
 
       // ============================================================
       // 🧠 Monitoreo Oracle + Update bitácora
       // ============================================================
-      if (sistema === "F4" && estadoFinal === "Error") {
+      if (sistema === "F4" && estado === "ERROR") {
         logConsole(`🔍 [F4] Error detectado → iniciando monitoreo Oracle...`, runId);
         try {
           const filaTarget = await page.locator(`#myTable tbody tr:has-text("${descripcion}")`).first();
@@ -646,19 +646,16 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         }
       }
 
-      // ============================================================
-      // 🔄 NUEVO: Refrescar tabla y continuar con el siguiente proceso
-      // ============================================================
       logConsole(`✅ ${descripcion} completado correctamente.`, runId);
       await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
       await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
       filas = await page.$$("#myTable tbody tr");
       logConsole(`🔁 Tabla actualizada tras completar ${descripcion} — continuando con el siguiente proceso.`, runId);
-      i = -1; // reinicia el bucle para reevaluar los siguientes procesos
+      i = -1;
 
     } catch (err) {
       if (err.message?.includes("context") || err.message?.includes("Execution context")) {
-        logConsole(`⚠️ Error DOM/contexto (${err.message}) — ignorado (no se recargará durante job largo).`, runId);
+        logConsole(`⚠️ Error DOM/contexto (${err.message}) — ignorado.`, runId);
         await page.waitForTimeout(10000);
         continue;
       } else {
