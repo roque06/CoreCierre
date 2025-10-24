@@ -23,55 +23,93 @@ async function navegarConRetries(page, url, maxRetries = 3) {
 /**
  * ⏳ Espera hasta que el proceso cambie a Completado o Error.
  */
-async function esperarCompletado(page, descripcion, runId = "GLOBAL") {
-  logConsole(`⏳ Esperando que "${descripcion}" cambie a Completado o Error...`, runId);
-
+// ============================================================
+// 🧠 Función robusta para esperar estado Completado/Error
+// Solo filtra exacto por sistema y nombre si el sistema = F4
+// ============================================================
+async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = "F4") {
   let estado = "";
   let intentos = 0;
+  const maxIntentos = 200; // seguridad para no quedarse infinito
 
-  while (true) {
+  // 🔧 Normalizador de texto
+  const normalizar = (txt) =>
+    (txt || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toUpperCase();
+
+  while (intentos < maxIntentos) {
     try {
-      // 🔍 Buscar la fila que contenga el texto del proceso
-      const filaLocator = page.locator(`#myTable tbody tr:has-text("${descripcion}")`);
+      intentos++;
 
-      // Esperar que la fila aparezca (por si hay render diferido)
-      await filaLocator.first().waitFor({ timeout: 10000 });
+      // 🔄 Recargar tabla para obtener estado real
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
+      await page.waitForSelector("#myTable tbody tr", { timeout: 15000 });
 
-      // 📖 Leer el texto del estado directamente (celda 10)
-      const estadoLocator = filaLocator.locator("td").nth(9);
-      estado = ((await estadoLocator.innerText()) || "").trim();
+      const filas = await page.$$("#myTable tbody tr");
+      let filaEncontrada = null;
 
-      // ✅ Si terminó, salir del bucle
-      if (["Completado", "Error"].includes(estado)) {
-        logConsole(`📌 Estado final de "${descripcion}": ${estado}`, runId);
+      // ============================================================
+      // 🧩 Buscar la fila correcta
+      // ============================================================
+      for (const fila of filas) {
+        try {
+          const codSistema = await fila.$eval("td:nth-child(1)", el => el.innerText.trim().toUpperCase());
+          const desc = await fila.$eval("td:nth-child(2)", el => el.innerText.trim().toUpperCase());
+
+          // ✅ Si es F4, filtra por sistema y descripción exacta
+          if (sistema === "F4") {
+            if (codSistema === "F4" && normalizar(desc) === normalizar(descripcion)) {
+              filaEncontrada = fila;
+              break;
+            }
+          } else {
+            // 🔹 Para otros sistemas (F2, MTC, F5, etc.) usa coincidencia parcial normal
+            if (normalizar(desc).includes(normalizar(descripcion))) {
+              filaEncontrada = fila;
+              break;
+            }
+          }
+        } catch { }
+      }
+
+      // ⚠️ Si no se encontró la fila, avisar y seguir intentando
+      if (!filaEncontrada) {
+        logConsole(`⚠️ No se encontró la fila para "${descripcion}" (${sistema}) — reintentando...`, runId);
+        await page.waitForTimeout(20000);
+        continue;
+      }
+
+      // ============================================================
+      // 📖 Leer el estado actual del proceso
+      // ============================================================
+      const estadoCelda = await filaEncontrada.$eval("td:nth-child(9)", el => el.innerText.trim());
+      estado = estadoCelda || "N/A";
+
+      // ============================================================
+      // 🏁 Verificar si completó o dio error
+      // ============================================================
+      if (["COMPLETADO", "ERROR"].includes(estado.toUpperCase())) {
+        logConsole(`📌 Estado final de "${descripcion}" (${sistema}): ${estado}`, runId);
         return estado;
       }
 
-      // 🔁 Log informativo mientras está en proceso o pendiente
-      logConsole(`🔁 "${descripcion}" sigue en estado: ${estado || "N/A"} → esperando...`, runId);
-
+      logConsole(`⏳ "${descripcion}" (${sistema}) sigue en estado: ${estado} → esperando...`, runId);
     } catch (err) {
-      // 🔄 Si se pierde el contexto DOM (refresh AJAX detectado)
-      if (
-        err.message.includes("Cannot find context") ||
-        err.message.includes("Execution context was destroyed")
-      ) {
-        logConsole(`⚠️ Contexto DOM perdido durante monitoreo de "${descripcion}" — refrescando referencia...`, runId);
-      } else {
-        logConsole(`⚠️ Error leyendo estado de "${descripcion}": ${err.message}`, runId);
-      }
+      logConsole(`⚠️ Error leyendo estado de "${descripcion}" (${sistema}): ${err.message}`, runId);
     }
 
-    // 🕒 Esperar antes de volver a chequear
-    await page.waitForTimeout(20000);
-
-    intentos++;
-    if (intentos % 60 === 0) {
-      const horas = ((intentos * 20) / 3600).toFixed(1);
-      logConsole(`⏳ "${descripcion}" lleva ${horas}h esperando — sigue en ${estado}`, runId);
-    }
+    // 🕒 Esperar 30 segundos antes del siguiente intento
+    await page.waitForTimeout(30000);
   }
+
+  logConsole(`🛑 Se alcanzó el máximo de intentos esperando "${descripcion}" (${sistema}) — estado final: ${estado}`, runId);
+  return estado;
 }
+
 
 
 
