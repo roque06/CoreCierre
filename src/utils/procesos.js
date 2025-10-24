@@ -329,10 +329,19 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         const fechaObj = new Date(fechaTxt.split("/").reverse().join("-"));
 
         // ⚠️ Omitir solo si COMPLETADO y fecha > fechaMayor
-        if (estado === "COMPLETADO" && fechaObj.getTime() > fechaMayor.getTime()) {
+        // 🚫 Omitir todo proceso COMPLETADO (de cualquier fecha)
+        if (estado === "COMPLETADO") {
           omitidos++;
           continue;
         }
+
+        // 🚫 Omitir los procesos cuya fecha es IGUAL o MAYOR a la fecha mayor global
+        if (fechaObj.getTime() >= fechaMayor.getTime()) {
+          omitidos++;
+          continue;
+        }
+
+        // ✅ Solo procesar los que estén PENDIENTES o ERROR y con fecha menor
 
         // --- Detectar fila más reciente si hay duplicados
         const filasDuplicadas = page.locator("#myTable tbody tr", { hasText: descripcion });
