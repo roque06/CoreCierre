@@ -1,0 +1,3 @@
+UPDATE PA.PA_REQUISITO_PROCESO_CIERRE
+SET ESTATUS='T' 
+WHERE cod_sistema_requisito in ('F5', 'F4', 'F2');

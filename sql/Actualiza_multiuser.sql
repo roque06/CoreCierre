@@ -1,0 +1,2 @@
+update CONTROL_SISTEMAS
+    set  MONOUSUARIO = 'N'

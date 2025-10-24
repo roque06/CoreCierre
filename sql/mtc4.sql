@@ -1,0 +1,7 @@
+UPDATE interfaces_externas_b2000
+SET CODIGO_VALIDACION = (
+  SELECT TO_CHAR(MAX(FEC_HOY), 'DD/MM/YYYY')
+  FROM CALENDARIOS WHERE COD_SISTEMA= 'CC' 
+)
+WHERE cod_empresa = 1
+AND nombre_programa = 'TCCARDTI'

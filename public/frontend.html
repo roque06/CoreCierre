@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Panel Cierre Bancario</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f5f7fa;
+      margin: 0;
+      padding: 0;
+      color: #333;
+    }
+    header {
+      background: #004080; /* azul institucional */
+      color: white;
+      padding: 15px;
+      font-size: 20px;
+      font-weight: bold;
+    }
+    #logs {
+      padding: 15px;
+      height: 80vh;
+      overflow-y: auto;
+      background: #fff;
+      border-top: 4px solid #004080;
+    }
+    .log-line {
+      padding: 6px 10px;
+      margin: 4px 0;
+      border-radius: 6px;
+      font-size: 15px;
+      white-space: pre-wrap;
+    }
+    .info { background: #e6f0ff; }
+    .ok { background: #e6ffe6; color: #006600; font-weight: bold; }
+    .error { background: #ffe6e6; color: #990000; font-weight: bold; }
+    .warning { background: #fff9e6; color: #996600; font-weight: bold; }
+    .script { background: #f0f0f0; font-style: italic; }
+  </style>
+</head>
+<body>
+  <header>🔹 Panel de Ejecución - Cierre Bancario</header>
+  <div id="logs"></div>
+
+  <script>
+    const logContainer = document.getElementById("logs");
+
+    function addLog(message) {
+      const div = document.createElement("div");
+      div.classList.add("log-line");
+
+      // asignar color según el contenido
+      if (message.includes("✅")) div.classList.add("ok");
+      else if (message.includes("❌")) div.classList.add("error");
+      else if (message.includes("⏳") || message.includes("⌛")) div.classList.add("warning");
+      else if (message.includes("📦")) div.classList.add("script");
+      else div.classList.add("info");
+
+      div.textContent = message;
+      logContainer.appendChild(div);
+
+      // scroll automático al último mensaje
+      logContainer.scrollTop = logContainer.scrollHeight;
+    }
+
+    // Conectar al backend por SSE
+    const evtSource = new EventSource("http://localhost:4000/api/logs");
+
+    evtSource.onmessage = function(event) {
+      addLog(event.data);
+    };
+  </script>
+</body>
+</html>

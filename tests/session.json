@@ -1,0 +1,95 @@
+{
+  "cookies": [
+    {
+      "name": "Path",
+      "value": "/",
+      "domain": "172.27.4.13",
+      "path": "/lib/jquery/dist",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "Path",
+      "value": "/",
+      "domain": "172.27.4.13",
+      "path": "/css/dashboard",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "Path",
+      "value": "/",
+      "domain": "172.27.4.13",
+      "path": "/js/dashboard",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "Path",
+      "value": "/",
+      "domain": "172.27.4.13",
+      "path": "/css/img",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "Path",
+      "value": "/",
+      "domain": "172.27.4.13",
+      "path": "/Home",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "Path",
+      "value": "/",
+      "domain": "172.27.4.13",
+      "path": "/css",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": ".AspNetCore.Antiforgery.K0Z0R09G7yg",
+      "value": "CfDJ8HFn3vZCfYFDsaWrh-hOEh7bJM91GYWpTt7EIqv-m2cZ5sz_nmnG7mrsghoulj-MRU2eplduh2Kn_SH75ufFKChM7b1eCGvNICk5LDxdPPLcbrfLoqYC4MEexLxJ6XXXzZW54OHQuDJs7pxOURwb4-g",
+      "domain": "172.27.4.13",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": false,
+      "sameSite": "Strict"
+    },
+    {
+      "name": "Path",
+      "value": "/",
+      "domain": "172.27.4.13",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": ".AspNetCore.Cookies",
+      "value": "CfDJ8HFn3vZCfYFDsaWrh-hOEh49xASOmNz3TwtA1G1zrNBaRekfTV4ziJ7TZCdDr2vLYAfJ9saLNrKETsimGWueGnLEPQshBUQGyjvGXu0QrAc3fk624LTEN0i44do0TUxGXB4FFDLyj4RBnBmiT3n9pBoATltP_lwISOa9ChtJRcmZX_KIuhFNC1VtewiswvUDSeDfSmDgkR8w1BNlNxF1q3QvbC_Sqf6zXZhtamQiG2jWiwJTLZrEeeHjIhGd5NFv5OaHb719BT7Vwqq-DnHv2QMOOQtwVAcVX8ddyXzTR_04t-Ky0ETqvvHGCZrGSN6XdvPfUNljsK0mxvwZAXYaLskwaL1vWcpNrWcvogJ8NdRei4vSjW4X6onNNMWRlPMT4Xcanbgx9ptGWt8InUNrIp_a0WkoevAKLjXuChJwviswEaqnkt7LVof8gmzKX7xZCcrOq7NX1g0RjOuoCoQ18K0lJVYvkIlirwJt5GWGnl2Y69OildVHHSWYkhMSgPVoNC7L2b8aoD1foUNBPfx92Mu2MmYUxEue0WW39Qvca3vEgN2wGIcKiX8zqYoQwJlNAyGhHpLfu08YTh-ekTqKapq88vU94TNXIyugFnlXJzgrk7Nu99klFhGK1sbUp39m-J4wOi5NprH25wr6bq5-ZsjutiqIqF9V55sasXtv5B2HkmkvFXY7IdDPZLGrpYp5oqJ59ucWyoiqr91R3U-DnVUcJjV05ioTPp3iy4OMhzCdwA6AZSKNnCvcK1CQaN5rY8Ey4yCVim0o8xJhlGUs0BNallyDwDjOeGu1gbwwyF7JnhuZ8e5bLJl5tV8kHDWOrKa_qn78VFypK8saMdCT5OdMWhSrNI2wvmprr7GWNDrxYIhEPe6002Kkoy6-MTe9_q8Wt6IfyogvN4QSUz6ey_3mKUaSUQ-21wIvSJPBWvFMbjVLXD_B18MFDXbu2KEbcGgDObHFWMs4_r4kKSMR3MqAP0y-1Pt3zsGCC_95hAqAmfS0wMO0ArhUchA9kYnx7h4aX7tCf-5SCgRDGiugykNg9app8COCTwtMloEuVl_pkAprF6wORoSe9MkqLDCA5a2oMg2rL3xF9zNWzTKMt24VbpXlAVcLjKjJOpVlrFZyiYnmVYMuREU8PsZHlaKJ_Wi5ND8DLVvq2COoMMPakunTQsYWxQ2Xof8S1yG40EU8mQVSjPOJWnkT2dzlDU53CCuXb6DrcKN1eDsfGJlGRnckjyt2b9YJB-e1Q0CvEu1LyixdQ8SX938Sse-ysWDDvaPy2Kj_DAgwiNzH9rpoAUVh2IqnqNiesrOgGU351HuPEKt2Dt6hmN6_UodZ3c4GDgaaReBJaodOxLAOOP4CQw7KC535bGKuoVDuNB9vl8oU_nWEfbPz7w-O6WM1wWPiHVRnOepswtSFnx3Hm3IhUnJubZ_u785jeRKf4xtRQvHexlX3zDIpA6Jvswuh6GotX4oU1YPqPiszzYqWBo4PI3qLXlEdP6XXz5NxYfsgXRMPfjHzCCpI3BF9r6v3u-7xKntHyutpcylF5ubNv858GlzEXwYjygALw5OsHxa4xh5OpITGpKbugOnbz9R4l_ksfwogfvFoImaZ0gk_ywG2G3wmH183CUSTAJtpyMcwlf3HbBIEIKMaK1RW2kURoxMHY37Ds5vy71b0D_apdKSLva736QWD1EY-UJTDP_FZlwBRC9pjMAkcGQrAIsVOcW1WeIAOLP9BN_aPfYsKKt0EILT6Qo6jYuv5I7-92cN-zs9gJrwJfJkcm10xnhr7VU22tiWUs-Yely5czeBkFeR8OBx64-auiD-xdm9iSc0VhWwA2uu60bHhTLTUeFAwfiEsaCuOQ981JtlXFXqpHQ7166Jow9xS5lZ9fA9DkIpVBowJiJKEe3uYGLx3FK3UpNskJGemAbFCwH4fuRanTQUEJ19IqG9gLRdKDyV_jcPSCbnTuqVNZgKTbYQ-qH4BcPhyAveN-InyGmM723gbOdpxs6hbgzsq1LmNQybC3BSsqIBB_MGL4WlLleNusuLNq1cOJw",
+      "domain": "172.27.4.13",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": false,
+      "sameSite": "Lax"
+    }
+  ],
+  "origins": []
+}

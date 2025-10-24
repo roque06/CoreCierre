@@ -1,0 +1,27 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn.lock
+
+# Build / cache / temp
+dist/
+build/
+.cache/
+tmp/
+*.tmp
+*.log
+
+# Logs del cierre
+logs/
+
+# Cache F4 y archivos temporales
+cache/
+**/f4_last_date.json
+
+# Config/secrets locales
+.env
+.env.*
+src/config/dbConnections.json
+
+# VS Code
+.vscode/

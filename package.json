@@ -1,0 +1,24 @@
+{
+  "name": "cierre-bancario",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "ts-node -r tsconfig-paths/register src/config/server.ts",
+    "clean": "powershell -Command \"if (Test-Path dist) { Remove-Item -Recurse -Force dist }\"",
+    "build": "tsc",
+    "start": "node dist/config/server.js"
+  },
+  "dependencies": {
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "oracledb": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/body-parser": "^1.19.5",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,12 @@
+UPDATE CJ.BCJ_MOVIMIENTO_DIARIO_ENCA a
+SET a.CODIGO_ESTADO_MOVIMIENTO = 'N'
+where a.CODIGO_EMPRESA = 1
+and a.CODIGO_TRANSACCION < 53
+and codigo_Estado_movimiento != 'N'
+and exists (Select '1'
+from CJ.BCJ_CAJEROS b,
+PA.USUARIOS_DEL_SISTEMA_B2000 c
+where a.CODIGO_CAJERO = B.CODIGO_CAJERO
+and b.CODIGO_USUARIO = C.CODIGO_USUARIO
+and b.tipo_cajero <> 'A'
+)
