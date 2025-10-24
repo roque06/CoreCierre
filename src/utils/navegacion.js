@@ -20,19 +20,14 @@ async function navegarConRetries(page, url, maxRetries = 3) {
   }
 }
 
-/**
- * ⏳ Espera hasta que el proceso cambie a Completado o Error.
- */
-// ============================================================
-// 🧠 Función robusta para esperar estado Completado/Error
-// Solo filtra exacto por sistema y nombre si el sistema = F4
-// ============================================================
+
 async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = "F4") {
   let estado = "";
   let intentos = 0;
   const maxIntentos = 200; // seguridad para no quedarse infinito
+  const esperaEntreIntentos = 30000; // 30 segundos entre ciclos
 
-  // 🔧 Normalizador de texto
+  // 🔧 Normalizador de texto (quita tildes, espacios, mayúsculas)
   const normalizar = (txt) =>
     (txt || "")
       .normalize("NFD")
@@ -45,9 +40,9 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = 
     try {
       intentos++;
 
-      // 🔄 Recargar tabla para obtener estado real
+      // 🔄 Recargar tabla (esperar DOM listo)
       await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
-      await page.waitForSelector("#myTable tbody tr", { timeout: 15000 });
+      await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
 
       const filas = await page.$$("#myTable tbody tr");
       let filaEncontrada = null;
@@ -57,28 +52,36 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = 
       // ============================================================
       for (const fila of filas) {
         try {
-          const codSistema = await fila.$eval("td:nth-child(1)", el => el.innerText.trim().toUpperCase());
-          const desc = await fila.$eval("td:nth-child(2)", el => el.innerText.trim().toUpperCase());
+          const codSistema = await fila.$eval("td:nth-child(3)", el =>
+            el.innerText.trim().toUpperCase()
+          );
+          const desc = await fila.$eval("td:nth-child(5)", el =>
+            el.innerText.trim().toUpperCase()
+          );
 
-          // ✅ Si es F4, filtra por sistema y descripción exacta
+          // ✅ Si es F4, comparar sistema y descripción exacta
           if (sistema === "F4") {
+            // Evita confundir con Correr Calendario de F2 o MTC
             if (codSistema === "F4" && normalizar(desc) === normalizar(descripcion)) {
               filaEncontrada = fila;
               break;
             }
           } else {
-            // 🔹 Para otros sistemas (F2, MTC, F5, etc.) usa coincidencia parcial normal
+            // 🔹 Para otros sistemas usa coincidencia parcial
             if (normalizar(desc).includes(normalizar(descripcion))) {
               filaEncontrada = fila;
               break;
             }
           }
-        } catch { }
+        } catch { /* ignora errores de fila parcial */ }
       }
 
-      // ⚠️ Si no se encontró la fila, avisar y seguir intentando
+      // ⚠️ Si no se encontró la fila → reintenta después de esperar
       if (!filaEncontrada) {
-        logConsole(`⚠️ No se encontró la fila para "${descripcion}" (${sistema}) — reintentando...`, runId);
+        logConsole(
+          `⚠️ No se encontró la fila para "${descripcion}" (${sistema}) — reintentando (${intentos}/${maxIntentos})...`,
+          runId
+        );
         await page.waitForTimeout(20000);
         continue;
       }
@@ -86,7 +89,17 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = 
       // ============================================================
       // 📖 Leer el estado actual del proceso
       // ============================================================
-      const estadoCelda = await filaEncontrada.$eval("td:nth-child(9)", el => el.innerText.trim());
+      let estadoCelda = "N/A";
+      try {
+        estadoCelda = await filaEncontrada.$eval("td:nth-child(9)", el =>
+          el.innerText.trim().toUpperCase()
+        );
+      } catch {
+        logConsole(`⚠️ No se pudo leer estado de "${descripcion}" (${sistema}) — reintentando...`, runId);
+        await page.waitForTimeout(15000);
+        continue;
+      }
+
       estado = estadoCelda || "N/A";
 
       // ============================================================
@@ -97,16 +110,27 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = 
         return estado;
       }
 
-      logConsole(`⏳ "${descripcion}" (${sistema}) sigue en estado: ${estado} → esperando...`, runId);
+      logConsole(
+        `⏳ "${descripcion}" (${sistema}) sigue en estado: ${estado} → esperando... (${intentos}/${maxIntentos})`,
+        runId
+      );
+
     } catch (err) {
-      logConsole(`⚠️ Error leyendo estado de "${descripcion}" (${sistema}): ${err.message}`, runId);
+      logConsole(
+        `⚠️ Error leyendo estado de "${descripcion}" (${sistema}): ${err.message}`,
+        runId
+      );
     }
 
-    // 🕒 Esperar 30 segundos antes del siguiente intento
-    await page.waitForTimeout(30000);
+    // 🕒 Esperar antes del siguiente intento
+    await page.waitForTimeout(esperaEntreIntentos);
   }
 
-  logConsole(`🛑 Se alcanzó el máximo de intentos esperando "${descripcion}" (${sistema}) — estado final: ${estado}`, runId);
+  // 🚨 Si llegó aquí, se agotaron los intentos
+  logConsole(
+    `🛑 Se alcanzó el máximo de intentos esperando "${descripcion}" (${sistema}) — último estado conocido: ${estado}`,
+    runId
+  );
   return estado;
 }
 
