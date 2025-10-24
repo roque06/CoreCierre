@@ -33,7 +33,7 @@ async function navegarConRetries(page, url, maxRetries = 3) {
  * @param {string} runId - identificador de ejecución global
  * @returns {Promise<"Completado"|"Error"|"Desconocido">}
  */
-async function esperarHastaCompletado(page, codSistema, codProceso, descripcion, claveProc, runId = "GLOBAL") {
+async function esperarCompletado(page, codSistema, codProceso, descripcion, claveProc, runId = "GLOBAL") {
   const filaSelector = `#myTable tbody tr:has-text("${descripcion}")`;
   let estadoPrevio = "";
   let iteraciones = 0;
