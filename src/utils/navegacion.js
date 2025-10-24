@@ -29,6 +29,10 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL") {
 
   let estado = "";
   let intentos = 0;
+  // 🧩 límites más cortos para pruebas
+  const maxIntentos = descripcion.toUpperCase().includes("CORRER CALENDARIO") ? 10 : 20;
+  // → Correr Calendario: 10 ciclos × 3 s = ~30 s
+  // → Otros procesos:   20 ciclos × 3 s = ~1 min
 
   while (true) {
     try {
@@ -43,20 +47,24 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL") {
 
       intentos++;
 
-      // 🕒 Si el estado sigue igual más de 20 intentos (~10 minutos), corta la espera
-      if (intentos >= 20) {
-        logConsole(`🛑 "${descripcion}" sigue en estado ${estado || "N/A"} tras 10 minutos → forzando salida.`, runId);
-        return estado;
+      if (intentos >= maxIntentos) {
+        logConsole(
+          `🛑 "${descripcion}" sigue en estado ${estado || "N/A"} tras ${(intentos * 3) / 60
+          } min → forzando salida (modo prueba).`,
+          runId
+        );
+        return estado || "Pendiente";
       }
 
     } catch (err) {
       logConsole(`⚠️ Error leyendo estado de "${descripcion}": ${err.message}`, runId);
     }
 
-    // 🕒 Espera 30 segundos entre lecturas
-    await page.waitForTimeout(30000);
+    // 🕒 Esperar solo 3 segundos entre lecturas (modo test)
+    await page.waitForTimeout(3000);
   }
 }
+
 
 
 
