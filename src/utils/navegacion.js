@@ -21,25 +21,27 @@ async function navegarConRetries(page, url, maxRetries = 3) {
 }
 
 /**
- * 🧠 Espera perpetuamente a que un proceso específico (F4, F5, etc.)
- * cambie a estado "Completado" o "Error", sin usar timeout fijo.
- * Mantiene sincronía con el DOM y reintenta si se pierde contexto.
+ * 🧠 Espera perpetuamente a que un proceso específico cambie
+ * a estado "Completado" o "Error", sin usar timeout fijo.
+ * Compatible con llamadas desde procesos.js (usa solo descripcion y runId).
  *
- * @param {import('playwright').Page} page - instancia de Playwright
- * @param {string} codSistema - código de sistema (ej. "F4")
- * @param {number|string} codProceso - identificador del proceso
- * @param {string} descripcion - descripción legible del proceso
- * @param {string} claveProc - clave combinada (F4-XX)
- * @param {string} runId - identificador de ejecución global
+ * @param {import('playwright').Page} page - instancia Playwright
+ * @param {string} descripcion - texto visible del proceso en la tabla
+ * @param {string} runId - identificador global opcional
  * @returns {Promise<"Completado"|"Error"|"Desconocido">}
  */
-async function esperarCompletado(page, codSistema, codProceso, descripcion, claveProc, runId = "GLOBAL") {
+async function esperarCompletado(page, descripcion, runId = "GLOBAL") {
+  if (!descripcion) {
+    logConsole(`⚠️ esperarCompletado recibió descripción vacía`, runId);
+    return "Desconocido";
+  }
+
   const filaSelector = `#myTable tbody tr:has-text("${descripcion}")`;
   let estadoPrevio = "";
   let iteraciones = 0;
   const inicio = Date.now();
 
-  logConsole(`🕒 Iniciando monitoreo perpetuo para "${descripcion}" (${codSistema}-${codProceso})...`, runId);
+  logConsole(`🕒 Iniciando monitoreo perpetuo para "${descripcion}"...`, runId);
 
   while (true) {
     try {
@@ -55,7 +57,7 @@ async function esperarCompletado(page, codSistema, codProceso, descripcion, clav
         continue;
       }
 
-      // Leer estado visual actual
+      // Leer estado actual del DOM
       const estadoDom = ((await fila.locator("td:nth-child(10)").textContent()) || "")
         .trim()
         .toUpperCase();
@@ -72,7 +74,7 @@ async function esperarCompletado(page, codSistema, codProceso, descripcion, clav
         return estadoDom;
       }
 
-      // Cada 10 minutos logea un mensaje de “sigue en proceso”
+      // Cada 10 minutos logea mensaje de “sigue en proceso”
       iteraciones++;
       if (iteraciones % 20 === 0) { // (20 ciclos * 30 seg ≈ 10 min)
         const mins = ((Date.now() - inicio) / 60000).toFixed(1);
@@ -82,7 +84,7 @@ async function esperarCompletado(page, codSistema, codProceso, descripcion, clav
     } catch (err) {
       logConsole(`⚠️ Error monitoreando "${descripcion}": ${err.message}`, runId);
 
-      // 🔄 Intentar recargar solo si el contexto se perdió
+      // 🔄 Intentar recargar si el contexto se perdió
       try {
         const baseUrl = page.url().split("/ProcesoCierre")[0] || "";
         await navegarConRetries(page, `${baseUrl}/ProcesoCierre/Procesar`);
@@ -92,7 +94,7 @@ async function esperarCompletado(page, codSistema, codProceso, descripcion, clav
       }
     }
 
-    // Espera antes de nuevo ciclo
+    // Espera antes del nuevo ciclo
     await page.waitForTimeout(30000);
   }
 }
