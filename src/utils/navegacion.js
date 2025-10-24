@@ -26,58 +26,67 @@ async function navegarConRetries(page, url, maxRetries = 3) {
  *    - Si se detecta "Completado" desde tabla principal, termina.
  *    - Si pasa mucho tiempo sin cambio, también rompe el ciclo.
  */
-async function esperarCompletado(page, descripcion, runId = "GLOBAL", timeoutMin = 10) {
-  const filaSelector = `tbody tr:has-text("${descripcion}")`;
-  let estado = "";
+async function esperarCompletado(page, descripcion, runId = "GLOBAL", checkIntervalSec = 30) {
   const inicio = Date.now();
+  let iteraciones = 0;
+  let estadoPrevio = "";
+  const filaSelector = `#myTable tbody tr:has-text("${descripcion}")`;
+
+  logConsole(`🕒 Iniciando monitoreo perpetuo para "${descripcion}"...`, runId);
 
   while (true) {
     try {
-      // 🔁 Refresca la página para forzar sincronización visual con el backend
-      await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
-      await page.waitForSelector("#myTable tbody tr", { timeout: 15000 });
+      // Esperar que exista la tabla
+      await page.waitForSelector("#myTable tbody tr", { timeout: 60000 });
 
-      // 🔹 Leer estado de la celda visible
+      // Reubicar fila dinámicamente en cada ciclo
       const fila = page.locator(filaSelector);
-      const estadoCell = fila.locator("td").nth(9);
-      estado = ((await estadoCell.textContent()) || "").trim();
-
-      // 🔹 Lectura secundaria desde tabla (por si DOM cambió)
-      const estadoTabla = await page.evaluate((desc) => {
-        const filas = document.querySelectorAll("tbody tr");
-        for (const tr of filas) {
-          const cols = tr.querySelectorAll("td");
-          if (cols.length < 10) continue;
-          const texto = cols[4].innerText.trim().toUpperCase();
-          if (texto.includes(desc.toUpperCase())) {
-            return cols[9].innerText.trim();
-          }
-        }
-        return "";
-      }, descripcion);
-
-      const estadoFinal = estadoTabla || estado;
-
-      // 🔹 Detecta completado o error
-      if (["Completado", "Error"].includes(estadoFinal)) {
-        logConsole(`📌 Estado final de "${descripcion}": ${estadoFinal}`, runId);
-        return estadoFinal;
+      const existe = await fila.count();
+      if (existe === 0) {
+        logConsole(`⚠️ Fila de "${descripcion}" no encontrada — posible recarga o cambio en DOM.`, runId);
+        await page.waitForTimeout(10000);
+        continue;
       }
 
-      // 🔹 Timeout de seguridad (por ejemplo 10 min)
-      const elapsedMin = (Date.now() - inicio) / 60000;
-      if (elapsedMin >= timeoutMin) {
-        logConsole(`⚠️ "${descripcion}" sin cambio tras ${timeoutMin} min — forzando continuación.`, runId);
-        return estadoFinal || "Desconocido";
+      // Leer texto del estado
+      const estado = ((await fila.locator("td:nth-child(10)").textContent()) || "")
+        .trim()
+        .toUpperCase();
+
+      // Detectar cambios reales
+      if (estado !== estadoPrevio) {
+        logConsole(`📊 "${descripcion}" cambió estado: ${estadoPrevio || "N/A"} → ${estado}`, runId);
+        estadoPrevio = estado;
       }
 
-      logConsole(`⏳ "${descripcion}" sigue en estado: ${estadoFinal || "N/A"} → esperando...`, runId);
+      // Detectar fin del proceso
+      if (["COMPLETADO", "ERROR"].includes(estado)) {
+        logConsole(`📌 Estado final de "${descripcion}": ${estado}`, runId);
+        return estado;
+      }
+
+      // Registrar progreso cada cierto número de ciclos
+      iteraciones++;
+      if (iteraciones % (600 / checkIntervalSec) === 0) { // cada ~10 min si interval=30s
+        const mins = ((Date.now() - inicio) / 60000).toFixed(1);
+        logConsole(`⏳ "${descripcion}" sigue en ${estado || "N/A"} tras ${mins} min...`, runId);
+      }
+
     } catch (err) {
-      logConsole(`⚠️ Error leyendo estado de "${descripcion}": ${err.message}`, runId);
+      logConsole(`⚠️ Error monitoreando "${descripcion}": ${err.message}`, runId);
+
+      // Intentar recargar tabla si se pierde el contexto
+      try {
+        const baseUrl = page.url().split("/ProcesoCierre")[0] || "";
+        await navegarConRetries(page, `${baseUrl}/ProcesoCierre/Procesar`);
+        logConsole(`🔁 Tabla recargada durante monitoreo de "${descripcion}".`, runId);
+      } catch (recErr) {
+        logConsole(`⚠️ Falló recarga durante monitoreo: ${recErr.message}`, runId);
+      }
     }
 
-    // 🕒 Esperar 30 segundos antes de volver a intentar
-    await page.waitForTimeout(30000);
+    // Esperar antes del siguiente ciclo
+    await page.waitForTimeout(checkIntervalSec * 1000);
   }
 }
 
