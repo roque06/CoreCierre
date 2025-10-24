@@ -24,44 +24,58 @@ async function navegarConRetries(page, url, maxRetries = 3) {
  * ⏳ Espera hasta que el proceso cambie a Completado o Error.
  */
 async function esperarCompletado(page, descripcion, runId = "GLOBAL") {
-  const fila = page.locator(`tbody tr:has-text("${descripcion}")`);
-  const estadoCell = fila.locator("td").nth(9);
+  logConsole(`⏳ Esperando que "${descripcion}" cambie a Completado o Error...`, runId);
 
   let estado = "";
   let intentos = 0;
-  // 🧩 límites más cortos para pruebas
-  const maxIntentos = descripcion.toUpperCase().includes("CORRER CALENDARIO") ? 10 : 20;
-  // → Correr Calendario: 10 ciclos × 3 s = ~30 s
-  // → Otros procesos:   20 ciclos × 3 s = ~1 min
 
   while (true) {
     try {
+      // 🔎 Buscar la fila de nuevo cada vez (evita referencias muertas del DOM)
+      const filas = page.locator("#myTable tbody tr");
+      const total = await filas.count();
+
+      let filaEncontrada = null;
+      for (let i = 0; i < total; i++) {
+        const texto = (await filas.nth(i).innerText()).toUpperCase();
+        if (texto.includes(descripcion.toUpperCase())) {
+          filaEncontrada = filas.nth(i);
+          break;
+        }
+      }
+
+      if (!filaEncontrada) {
+        logConsole(`⚠️ No se encontró la fila para "${descripcion}" (reintentando)...`, runId);
+        await page.waitForTimeout(5000);
+        continue;
+      }
+
+      // 📖 Leer estado directamente desde la celda 10 (índice 9)
+      const estadoCell = filaEncontrada.locator("td").nth(9);
       estado = ((await estadoCell.textContent()) || "").trim();
 
+      // ✅ Estado final detectado
       if (["Completado", "Error"].includes(estado)) {
         logConsole(`📌 Estado final de "${descripcion}": ${estado}`, runId);
         return estado;
       }
 
-      logConsole(`⏳ "${descripcion}" sigue en estado: ${estado || "N/A"} → esperando...`, runId);
+      logConsole(`🔁 "${descripcion}" sigue en estado: ${estado || "N/A"} → esperando...`, runId);
+
+      // Espera entre chequeos
+      await page.waitForTimeout(60000); // 1 minuto entre lecturas
 
       intentos++;
-
-      if (intentos >= maxIntentos) {
-        logConsole(
-          `🛑 "${descripcion}" sigue en estado ${estado || "N/A"} tras ${(intentos * 3) / 60
-          } min → forzando salida (modo prueba).`,
-          runId
-        );
-        return estado || "Pendiente";
+      // Cada 60 intentos (1 hora), log informativo sin forzar salida
+      if (intentos % 60 === 0) {
+        const horas = (intentos / 60).toFixed(1);
+        logConsole(`⏳ "${descripcion}" lleva ~${horas} h esperando → sigue en ${estado}`, runId);
       }
 
     } catch (err) {
       logConsole(`⚠️ Error leyendo estado de "${descripcion}": ${err.message}`, runId);
+      await page.waitForTimeout(10000);
     }
-
-    // 🕒 Esperar solo 3 segundos entre lecturas (modo test)
-    await page.waitForTimeout(3000);
   }
 }
 
