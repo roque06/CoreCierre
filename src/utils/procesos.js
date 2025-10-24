@@ -197,7 +197,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
     logConsole("🔄 [Modo F4 Fecha Mayor] ejecución controlada por SQL sin clics.", runId);
 
     // ============================================================
-    // 1️⃣ Detectar fechas F4 y determinar si realmen
+    // 1️⃣ Detectar fechas F4 y determinar si realmente hay fecha mayor
     // ============================================================
     const filas = await page.$$("#myTable tbody tr");
     const fechasF4 = [];
@@ -224,27 +224,71 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
       return "F4_SIN_FECHAS";
     }
 
-    logConsole(`🔎 Fechas F4 detectadas: ${fechasValidas.map(f => f.toLocaleDateString("es-ES")).join(", ")}`, runId);
+    logConsole(
+      `🔎 Fechas F4 detectadas: ${fechasValidas.map(f => f.toLocaleDateString("es-ES")).join(", ")}`,
+      runId
+    );
 
     const fechaMayor = fechasValidas.at(-1);
     const fechaMin = fechasValidas.at(0);
     const todasIguales = fechaMayor.getTime() === fechaMin.getTime();
 
     if (todasIguales) {
-      logConsole(`ℹ️ Todas las fechas F4 son iguales (${fechaMayor.toLocaleDateString("es-ES")}) → no se activa modo especial.`, runId);
+      logConsole(
+        `ℹ️ Todas las fechas F4 son iguales (${fechaMayor.toLocaleDateString(
+          "es-ES"
+        )}) → no se activa modo especial.`,
+        runId
+      );
       return "F4_TODAS_IGUALES";
     }
 
     // ============================================================
     // 2️⃣ Preparar fecha Oracle (DD-MMM-YYYY)
     // ============================================================
-    const mesesOracle = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
-    const fechaOracle = `${String(fechaMayor.getUTCDate()).padStart(2, "0")}-${mesesOracle[fechaMayor.getUTCMonth()]}-${fechaMayor.getUTCFullYear()}`;
+    const mesesOracle = [
+      "JAN",
+      "FEB",
+      "MAR",
+      "APR",
+      "MAY",
+      "JUN",
+      "JUL",
+      "AUG",
+      "SEP",
+      "OCT",
+      "NOV",
+      "DEC",
+    ];
+    const fechaOracle = `${String(fechaMayor.getUTCDate()).padStart(2, "0")}-${mesesOracle[fechaMayor.getUTCMonth()]
+      }-${fechaMayor.getUTCFullYear()}`;
     logConsole(`📅 Fecha F4 más reciente detectada: ${fechaOracle}`, runId);
 
     // ============================================================
-    // 3️⃣ Ejecutar scriptCursol solo una vez
+    // 3️⃣ Ejecutar scriptCursol solo una vez (controlando si ya hay completados)
     // ============================================================
+
+    // 🧠 Paso previo: verificar si ya existe un proceso completado con la fecha mayor
+    let fechaYaCompletada = false;
+    for (const fila of filas) {
+      const sistema = (await fila.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase())) || "";
+      const fechaTxt = (await fila.$eval("td:nth-child(7)", el => el.innerText.trim())) || "";
+      const estadoTxt = ((await fila.$eval("td:nth-child(10)", el => el.innerText.trim())) || "").toUpperCase();
+
+      if (sistema === "F4" && fechaTxt) {
+        const f = new Date(fechaTxt.split("/").reverse().join("-"));
+        if (f.getTime() === fechaMayor.getTime() && estadoTxt === "COMPLETADO") {
+          fechaYaCompletada = true;
+          break;
+        }
+      }
+    }
+
+    if (fechaYaCompletada) {
+      logConsole("✅ Fecha mayor F4 ya tiene procesos completados — no se ejecuta scriptCursol.sql", runId);
+      return "F4_FECHA_YA_PROCESADA";
+    }
+
     if (!procesosActualizados.has("SCRIPT_F4")) {
       try {
         const original = path.join(__dirname, "../../sql/scriptCursol.sql");
@@ -274,7 +318,6 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
     // ============================================================
     const filasActuales = await page.$$("#myTable tbody tr");
 
-    // 🧩 NUEVO: recolectar info y ordenar por cod_proceso ascendente
     const procesosOrdenados = [];
     for (const fila of filasActuales) {
       try {
@@ -293,7 +336,6 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
 
     procesosOrdenados.sort((a, b) => a.codProceso - b.codProceso);
 
-    // 🔁 Procesar en orden, esperando secuencialmente
     for (const { fila, descripcion, estado, fechaTxt, codProceso } of procesosOrdenados) {
       try {
         if (page.isClosed && page.isClosed()) {
@@ -401,7 +443,6 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
     } else {
       logConsole("⚠️ No se pudo recargar tabla (la página fue cerrada).", runId);
     }
-
   } catch (err) {
     logConsole(`❌ Error general en F4FechaMayor: ${err.message}`, runId);
   } finally {
