@@ -31,55 +31,48 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL") {
 
   while (true) {
     try {
-      // 🔁 Rebuscar la fila en cada ciclo (nunca usar handles antiguos)
-      const filas = await page.$$("#myTable tbody tr");
-      let filaObjetivo = null;
+      // 🔍 Buscar la fila que contenga el texto del proceso
+      const filaLocator = page.locator(`#myTable tbody tr:has-text("${descripcion}")`);
 
-      for (const fila of filas) {
-        const textoFila = (await fila.innerText()).toUpperCase();
-        if (textoFila.includes(descripcion.toUpperCase())) {
-          filaObjetivo = fila;
-          break;
-        }
-      }
+      // Esperar que la fila aparezca (por si hay render diferido)
+      await filaLocator.first().waitFor({ timeout: 10000 });
 
-      if (!filaObjetivo) {
-        logConsole(`⚠️ No se encontró fila para "${descripcion}" (reintentando)...`, runId);
-        await page.waitForTimeout(5000);
-        continue;
-      }
+      // 📖 Leer el texto del estado directamente (celda 10)
+      const estadoLocator = filaLocator.locator("td").nth(9);
+      estado = ((await estadoLocator.innerText()) || "").trim();
 
-      // 🧩 Leer la columna de estado sin usar $eval (evita pérdida de contexto)
-      const celdas = await filaObjetivo.$$("td");
-      estado = ((await celdas[9].innerText()) || "").trim();
-
-      // ✅ Detectar finalización
+      // ✅ Si terminó, salir del bucle
       if (["Completado", "Error"].includes(estado)) {
         logConsole(`📌 Estado final de "${descripcion}": ${estado}`, runId);
         return estado;
       }
 
+      // 🔁 Log informativo mientras está en proceso o pendiente
       logConsole(`🔁 "${descripcion}" sigue en estado: ${estado || "N/A"} → esperando...`, runId);
+
     } catch (err) {
-      // ⚠️ Si Playwright pierde contexto del DOM, solo reintenta
-      if (err.message.includes("Cannot find context")) {
-        logConsole(`⚠️ Contexto DOM perdido (refresh parcial detectado). Reintentando lectura de "${descripcion}"...`, runId);
+      // 🔄 Si se pierde el contexto DOM (refresh AJAX detectado)
+      if (
+        err.message.includes("Cannot find context") ||
+        err.message.includes("Execution context was destroyed")
+      ) {
+        logConsole(`⚠️ Contexto DOM perdido durante monitoreo de "${descripcion}" — refrescando referencia...`, runId);
       } else {
         logConsole(`⚠️ Error leyendo estado de "${descripcion}": ${err.message}`, runId);
       }
     }
 
-    // ⏱️ Esperar 30 segundos antes de volver a intentar
-    await page.waitForTimeout(30000);
-    intentos++;
+    // 🕒 Esperar antes de volver a chequear
+    await page.waitForTimeout(20000);
 
-    // 🔁 Mensaje informativo cada 60 ciclos (30 min)
+    intentos++;
     if (intentos % 60 === 0) {
-      const horas = (intentos * 30) / 3600;
-      logConsole(`⏳ "${descripcion}" lleva ${(horas).toFixed(1)}h en espera — sigue en ${estado}`, runId);
+      const horas = ((intentos * 20) / 3600).toFixed(1);
+      logConsole(`⏳ "${descripcion}" lleva ${horas}h esperando — sigue en ${estado}`, runId);
     }
   }
 }
+
 
 
 
