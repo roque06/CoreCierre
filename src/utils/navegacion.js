@@ -40,9 +40,13 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = 
   while (intentos < maxIntentos) {
     try {
       intentos++;
-      await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
-      await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
 
+      // 🚫 Evitar reload si el sistema es F4 y hay procesos sensibles (Cierre Diario)
+      if (sistema !== "F4") {
+        await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
+      }
+
+      await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
       const filas = await page.$$("#myTable tbody tr");
       let filaEncontrada = null;
 
@@ -69,24 +73,20 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = 
         continue;
       }
 
+      // Leer el contenido de la celda de estado
       let estadoCelda = "N/A";
       try {
         estadoCelda = await filaEncontrada.$eval("td:nth-child(9)", el => el.innerText.trim().toUpperCase());
-      } catch {
-        logConsole(`⚠️ No se pudo leer estado de "${descripcion}" (${sistema}) — reintentando...`, runId);
+      } catch (err) {
+        logConsole(`⚠️ No se pudo leer estado de "${descripcion}" (${sistema}): ${err.message}`, runId);
         await page.waitForTimeout(15000);
         continue;
       }
 
       estado = estadoCelda || "N/A";
 
-      // ============================================================
-      // 🧩 CASO ESPECIAL: F4-5 “Aplicación de Transferencias Automáticas”
-      // ============================================================
-      if (
-        sistema === "F4" &&
-        normalizar(descripcion) === normalizar("Aplicación de Transferencias Automáticas")
-      ) {
+      // 🧩 CASO ESPECIAL: F4-5 Aplicación de Transferencias Automáticas
+      if (sistema === "F4" && normalizar(descripcion) === normalizar("Aplicación de Transferencias Automáticas")) {
         logConsole(`⚙️ Proceso F4-5 detectado → ejecutando UPDATE forzado en bitácora y omitiendo espera.`, runId);
         const updateSQL = `
           UPDATE PA.PA_BITACORA_PROCESO_CIERRE
@@ -99,27 +99,29 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = 
                 WHERE x.COD_SISTEMA='F4'
                   AND x.COD_PROCESO=5
              )`;
-        const ok = await runSqlInline(updateSQL, connectString);
-        if (ok) {
-          logConsole(`✅ Bitácora actualizada correctamente para F4-5 (forzado).`, runId);
-        } else {
-          logConsole(`⚠️ No se pudo actualizar bitácora Oracle para F4-5.`, runId);
+        try {
+          const ok = await runSqlInline(updateSQL, connectString);
+          logConsole(ok ? `✅ Bitácora actualizada correctamente para F4-5.` : `⚠️ No se pudo actualizar bitácora para F4-5.`, runId);
+        } catch (e) {
+          logConsole(`❌ Error ejecutando SQL inline (F4-5): ${e.message}`, runId);
         }
-        return "IGNORADO"; // se omite espera
+        return "IGNORADO";
       }
 
-      // ============================================================
-      // 🏁 Si completó o dio error
-      // ============================================================
-      if (["COMPLETADO", "ERROR"].includes(estado.toUpperCase())) {
+      // ✅ Interpretar fecha/hora como COMPLETADO
+      if (/^\d{1,2}\/\d{1,2}\/\d{4}\.\d{1,2}:\d{2}(AM|PM)$/i.test(estado)) {
+        logConsole(`📅 Estado con timestamp detectado ("${estado}") → interpretado como COMPLETADO.`, runId);
+        return "COMPLETADO";
+      }
+
+      // 🏁 Completado o Error
+      if (["COMPLETADO", "ERROR"].includes(estado)) {
         logConsole(`📌 Estado final de "${descripcion}" (${sistema}): ${estado}`, runId);
         return estado;
       }
 
-      // ============================================================
-      // 🧠 Si F4 genérico y sin job Oracle activo → salir
-      // ============================================================
-      if (sistema === "F4" && ["N/A", "PENDIENTE"].includes(estado.toUpperCase()) && intentos % 3 === 0) {
+      // 🧠 F4 sin job activo → ignorar
+      if (sistema === "F4" && ["N/A", "PENDIENTE"].includes(estado) && intentos % 3 === 0) {
         const hayJob = await monitorearF4Job(connectString, baseDatos, null, runId, { soloDetectar: true });
         if (!hayJob) {
           logConsole(`🚫 No hay job Oracle activo para "${descripcion}" (${sistema}) — se ignora proceso y se continúa.`, runId);
@@ -129,15 +131,21 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = 
 
       logConsole(`⏳ "${descripcion}" (${sistema}) sigue en estado: ${estado} → esperando... (${intentos}/${maxIntentos})`, runId);
     } catch (err) {
+      if (err.message.includes("ERR_ABORTED")) {
+        logConsole(`⚠️ Reload abortado, reintentando carga limpia...`, runId);
+        await page.goto(page.url().split("?")[0], { waitUntil: "domcontentloaded" });
+        continue;
+      }
       logConsole(`⚠️ Error leyendo estado de "${descripcion}" (${sistema}): ${err.message}`, runId);
     }
 
     await page.waitForTimeout(esperaEntreIntentos);
   }
 
-  logConsole(`🛑 Se alcanzó el máximo de intentos esperando "${descripcion}" (${sistema}) — último estado conocido: ${estado}`, runId);
+  logConsole(`🛑 Máximo de intentos alcanzado esperando "${descripcion}" (${sistema}) — último estado: ${estado}`, runId);
   return estado;
 }
+
 
 
 
