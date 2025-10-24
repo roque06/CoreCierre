@@ -185,9 +185,6 @@ const recoveryScripts = {
 const procesosActualizados = new Set();
 let f4EnEjecucion = false;
 
-// =============================================================
-// 🧩 Modo especial F4 Fecha Mayor (robusto + continua ejecución)
-// =============================================================
 async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLOBAL") {
   if (f4EnEjecucion) {
     logConsole("⏸️ F4FechaMayor ya en ejecución — esperando a que termine.", runId);
@@ -226,20 +223,18 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
       return "F4_SIN_FECHAS";
     }
 
-    logConsole(
-      `🔎 Fechas F4 detectadas: ${fechasValidas.map(f => f.toLocaleDateString("es-ES")).join(", ")}`,
-      runId
-    );
-
     const fechaMayor = fechasValidas.at(-1);
     const fechaMin = fechasValidas.at(0);
     const todasIguales = fechaMayor.getTime() === fechaMin.getTime();
 
+    logConsole(
+      `🔎 Detectadas ${fechasValidas.length} fechas F4 — mayor=${fechaMayor.toLocaleDateString("es-ES")}`,
+      runId
+    );
+
     if (todasIguales) {
       logConsole(
-        `ℹ️ Todas las fechas F4 son iguales (${fechaMayor.toLocaleDateString(
-          "es-ES"
-        )}) → no se activa modo especial.`,
+        `ℹ️ Todas las fechas F4 son iguales (${fechaMayor.toLocaleDateString("es-ES")}) → no se activa modo especial.`,
         runId
       );
       return "F4_TODAS_IGUALES";
@@ -248,29 +243,22 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
     // ============================================================
     // 2️⃣ Preparar fecha Oracle (DD-MMM-YYYY)
     // ============================================================
-    const mesesOracle = [
-      "JAN",
-      "FEB",
-      "MAR",
-      "APR",
-      "MAY",
-      "JUN",
-      "JUL",
-      "AUG",
-      "SEP",
-      "OCT",
-      "NOV",
-      "DEC",
-    ];
-    const fechaOracle = `${String(fechaMayor.getUTCDate()).padStart(2, "0")}-${mesesOracle[fechaMayor.getUTCMonth()]
-      }-${fechaMayor.getUTCFullYear()}`;
+    const mesesOracle = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+    const fechaOracle = `${String(fechaMayor.getUTCDate()).padStart(2, "0")}-${mesesOracle[fechaMayor.getUTCMonth()]}-${fechaMayor.getUTCFullYear()}`;
     logConsole(`📅 Fecha F4 más reciente detectada: ${fechaOracle}`, runId);
 
     // ============================================================
-    // 3️⃣ Ejecutar scriptCursol solo una vez (controlando si ya hay completados)
+    // 🧠 Evitar repetir ejecución para la misma fecha
     // ============================================================
+    if (f4FechasProcesadas.has(fechaOracle)) {
+      logConsole(`⚠️ Fecha mayor ${fechaOracle} ya fue procesada previamente — se omite reejecución.`, runId);
+      return "F4_FECHA_DUPLICADA";
+    }
+    f4FechasProcesadas.add(fechaOracle);
 
-    // 🧠 Paso previo: verificar si ya existe un proceso completado con la fecha mayor
+    // ============================================================
+    // 3️⃣ Ejecutar scriptCursol solo una vez (si no hay completados)
+    // ============================================================
     let fechaYaCompletada = false;
     for (const fila of filas) {
       const sistema = (await fila.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase())) || "";
@@ -299,8 +287,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         contenido = contenido.replace(/fecha\s*=\s*'[^']+'/i, `fecha = '${fechaOracle}'`);
         fs.writeFileSync(temporal, contenido, "utf-8");
 
-        logConsole(`📦 Preparando y ejecutando scriptCursol_tmp.sql con fecha ${fechaOracle}`, runId);
-
+        logConsole(`📦 Ejecutando scriptCursol_tmp.sql con fecha ${fechaOracle}`, runId);
         await fetch("http://127.0.0.1:4000/api/run-script", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -319,13 +306,11 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
     // 4️⃣ Procesar procesos F4 (solo si hay pendientes con fecha menor)
     // ============================================================
     const filasActuales = await page.$$("#myTable tbody tr");
-
     const procesosOrdenados = [];
     for (const fila of filasActuales) {
       try {
         const sistema = (await fila.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase())) || "";
         if (sistema !== "F4") continue;
-
         const descripcion = (await fila.$eval("td:nth-child(5)", el => el.innerText.trim())) || "";
         const estado = ((await fila.$eval("td:nth-child(10)", el => el.innerText.trim())) || "").toUpperCase();
         const fechaTxt = (await fila.$eval("td:nth-child(7)", el => el.innerText.trim())) || "";
@@ -335,8 +320,9 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         procesosOrdenados.push({ fila, descripcion, estado, fechaTxt, codProceso });
       } catch { }
     }
-
     procesosOrdenados.sort((a, b) => a.codProceso - b.codProceso);
+
+    let omitidos = 0;
 
     for (const { fila, descripcion, estado, fechaTxt, codProceso } of procesosOrdenados) {
       try {
@@ -347,7 +333,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
 
         const fechaObj = new Date(fechaTxt.split("/").reverse().join("-"));
         if (estado === "COMPLETADO" || fechaObj.getTime() >= fechaMayor.getTime()) {
-          logConsole(`⏭️ ${descripcion} ya completado o con fecha igual/mayor — omitido.`, runId);
+          omitidos++;
           continue;
         }
 
@@ -433,6 +419,9 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         logConsole(`⚠️ Error en proceso F4 especial: ${errFila.message}`, runId);
       }
     }
+
+    if (omitidos > 0)
+      logConsole(`⏭️ ${omitidos} procesos ya completados o con fecha igual/mayor fueron omitidos.`, runId);
 
     // ============================================================
     // 5️⃣ Recargar tabla y continuar con siguiente sistema (F5, FIN)
