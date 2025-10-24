@@ -313,7 +313,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         const link = await fila.$("a[href*='CodProceso']");
         const href = (await link?.getAttribute("href")) || "";
         const codProceso = parseInt(href.match(/CodProceso=([^&]+)/i)?.[1] || "0", 10);
-        procesosOrdenados.push({ fila, descripcion, estado, fechaTxt, codProceso });
+        procesosOrdenados.push({ descripcion, estado, fechaTxt, codProceso });
       } catch { }
     }
     procesosOrdenados.sort((a, b) => a.codProceso - b.codProceso);
@@ -353,8 +353,9 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
           filaCorrecta = filasDuplicadas.first();
         }
 
-        const link = await filaCorrecta.$("a[href*='CodProceso']");
-        const href = (await link?.getAttribute("href")) || "";
+        // ✅ CORREGIDO: usar locator() en vez de .$()
+        const linkLocator = filaCorrecta.locator("a[href*='CodProceso']").first();
+        const href = (await linkLocator.getAttribute("href")) || "";
         const codSistema = href.match(/CodSistema=([^&]+)/i)?.[1] || "F4";
         const claveProc = `${codSistema}-${codProceso}`;
         if (procesosActualizados.has(claveProc)) continue;
@@ -390,7 +391,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         procesosActualizados.add(claveProc);
 
         // ============================================================
-        // 4B️⃣ Esperar y monitorear estado hasta completado o error
+        // 4B️⃣ Monitorear estado hasta completado o error
         // ============================================================
         logConsole(`⏳ Monitoreando estado de "${descripcion}" hasta completado...`, runId);
         const t0 = Date.now();
@@ -404,7 +405,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         if (resultado === "Error") {
           logConsole(`🔍 [F4 Fecha Mayor] Error detectado en ${descripcion} → iniciando monitoreo Oracle...`, runId);
           try {
-            await page.waitForTimeout(15000); // retardo seguro para que se registre el job
+            await page.waitForTimeout(15000);
             const { monitorearF4Job, runSqlInline } = require("./oracleUtils.js");
             const puedeContinuar = await monitorearF4Job(connectString, baseDatos, async () => {
               const updateSQL = `
@@ -459,6 +460,8 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
 
   return "F4_COMPLETADO_MAYOR";
 }
+
+
 
 
 
@@ -591,10 +594,21 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       // ============================================================
       // 🧩 Caso especial F4 (FECHA MAYOR)
       // ============================================================
-      if (sistema === "F4") {
-        const tieneFechaMayor = await esF4FechaMayor(descripcion, fechaTxt, filas, runId);
+      if (sistema.toUpperCase() === "F4") {
+        // Determinar si esta fila corresponde a la fecha mayor entre las F4
+        let tieneFechaMayor = false;
+        try {
+          tieneFechaMayor = await esF4FechaMayor(descripcion, fechaTxt, filas, runId);
+        } catch (err) {
+          logConsole(`⚠️ Error evaluando FECHA MAYOR para ${descripcion}: ${err.message}`, runId);
+          tieneFechaMayor = false;
+        }
 
         if (tieneFechaMayor) {
+          if (f4FechasProcesadas.has(fechaTxt)) {
+            logConsole(`⚙️ [F4] Fecha mayor ${fechaTxt} ya fue procesada anteriormente — omitiendo reejecución.`, runId);
+            continue;
+          }
           logConsole(`📆 [F4] FECHA MAYOR detectada → ejecutando SQL sin clics`, runId);
           const resultadoF4 = await ejecutarF4FechaMayor(page, baseDatos, connectString, runId);
           if (resultadoF4 === "F4_COMPLETADO_MAYOR") {
@@ -612,7 +626,11 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       // ============================================================
       // 🔹 Flujo normal (procesos comunes)
       // ============================================================
-      await ejecutarPreScripts(descripcion, baseDatos);
+      try {
+        await ejecutarPreScripts(descripcion, baseDatos);
+      } catch (err) {
+        logConsole(`⚠️ Error ejecutando pre-scripts: ${err.message}`, runId);
+      }
 
       // 🧠 Localizar fila activa: elegir automáticamente la de fecha más reciente si hay duplicados
       const filasCoincidentes = page.locator("#myTable tbody tr", { hasText: descripcion });
