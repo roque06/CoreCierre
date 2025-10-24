@@ -26,10 +26,11 @@ async function navegarConRetries(page, url, maxRetries = 3) {
 async function esperarCompletado(page, descripcion, runId = "GLOBAL") {
   const filaSelector = `tbody tr:has-text("${descripcion}")`;
   let estado = "";
+  let intentos = 0;
 
   while (true) {
     try {
-      // 🔄 Refrescar la tabla en cada ciclo para obtener el estado real del backend
+      // 🔄 Refrescar tabla en cada ciclo para obtener estado real del backend
       await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
       await page.waitForSelector("#myTable tbody tr", { timeout: 15000 });
 
@@ -43,6 +44,37 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL") {
       }
 
       logConsole(`⏳ "${descripcion}" sigue en estado: ${estado || "N/A"} → esperando...`, runId);
+
+      // 🔁 Intentos acumulados
+      intentos++;
+
+      // ⚠ Si lleva más de 6 ciclos (~3 minutos) sin cambiar, forzar recarga manual adicional
+      if (intentos % 6 === 0) {
+        logConsole(`🔄 "${descripcion}" sigue sin cambio tras ${(intentos * 30) / 60} min → reintentando con recarga completa...`, runId);
+        const baseUrl = page.url().split("/ProcesoCierre")[0];
+        try {
+          await navegarConRetries(page, `${baseUrl}/ProcesoCierre/Procesar`);
+          await page.waitForTimeout(2000);
+          const nuevoEstado = await page.evaluate((desc) => {
+            const filas = [...document.querySelectorAll("#myTable tbody tr")];
+            const fila = filas.find(f => f.innerText.includes(desc));
+            return fila ? fila.querySelectorAll("td")[9].innerText.trim() : "Desconocido";
+          }, descripcion);
+          if (["Completado", "Error"].includes(nuevoEstado)) {
+            logConsole(`📌 "${descripcion}" cambió a ${nuevoEstado} tras recarga.`, runId);
+            return nuevoEstado;
+          }
+        } catch (recErr) {
+          logConsole(`⚠️ Error durante recarga de ${descripcion}: ${recErr.message}`, runId);
+        }
+      }
+
+      // 🛑 Si después de 40 ciclos (~20 min) sigue igual, romper bucle
+      if (intentos >= 40) {
+        logConsole(`🛑 "${descripcion}" sigue en estado ${estado || "N/A"} tras 20 minutos → forzando salida de espera.`, runId);
+        return estado;
+      }
+
     } catch (err) {
       logConsole(`⚠️ Error leyendo estado de "${descripcion}": ${err.message}`, runId);
     }
