@@ -227,10 +227,16 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
     const fechaMin = fechasValidas.at(0);
     const todasIguales = fechaMayor.getTime() === fechaMin.getTime();
 
-    logConsole(`🔎 Detectadas ${fechasValidas.length} fechas F4 — mayor=${fechaMayor.toLocaleDateString("es-ES")}`, runId);
+    logConsole(
+      `🔎 Detectadas ${fechasValidas.length} fechas F4 — mayor=${fechaMayor.toLocaleDateString("es-ES")}`,
+      runId
+    );
 
     if (todasIguales) {
-      logConsole(`ℹ️ Todas las fechas F4 son iguales (${fechaMayor.toLocaleDateString("es-ES")}) → no se activa modo especial.`, runId);
+      logConsole(
+        `ℹ️ Todas las fechas F4 son iguales (${fechaMayor.toLocaleDateString("es-ES")}) → no se activa modo especial.`,
+        runId
+      );
       return "F4_TODAS_IGUALES";
     }
 
@@ -318,7 +324,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
 
     let omitidos = 0;
 
-    for (const { descripcion, estado, fechaTxt, codProceso } of procesosOrdenados) {
+    for (const { fila, descripcion, estado, fechaTxt, codProceso } of procesosOrdenados) {
       try {
         if (page.isClosed && page.isClosed()) {
           logConsole("⚠️ Página cerrada prematuramente durante F4FechaMayor — abortando monitoreo.", runId);
@@ -331,27 +337,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
           continue;
         }
 
-        // 🔍 Localizar fila con fecha más reciente cuando hay duplicadas
-        const filasDuplicadas = page.locator("#myTable tbody tr", { hasText: descripcion });
-        const total = await filasDuplicadas.count();
-        let filaCorrecta;
-        if (total > 1) {
-          let fechaMax = 0;
-          for (let x = 0; x < total; x++) {
-            const filaTmp = filasDuplicadas.nth(x);
-            const fechaTxtTmp = (await filaTmp.locator("td:nth-child(7)").textContent())?.trim() || "";
-            const f = new Date(fechaTxtTmp.split("/").reverse().join("-"));
-            if (f && f.getTime() > fechaMax) {
-              fechaMax = f.getTime();
-              filaCorrecta = filaTmp;
-            }
-          }
-          logConsole(`⚙️ Duplicadas detectadas para "${descripcion}" → usando fila con fecha más reciente.`, runId);
-        } else {
-          filaCorrecta = filasDuplicadas.first();
-        }
-
-        const link = await filaCorrecta.$("a[href*='CodProceso']");
+        const link = await fila.$("a[href*='CodProceso']");
         const href = (await link?.getAttribute("href")) || "";
         const codSistema = href.match(/CodSistema=([^&]+)/i)?.[1] || "F4";
         const claveProc = `${codSistema}-${codProceso}`;
@@ -402,7 +388,6 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         if (resultado === "Error") {
           logConsole(`🔍 [F4 Fecha Mayor] Error detectado en ${descripcion} → iniciando monitoreo Oracle...`, runId);
           try {
-            await page.waitForTimeout(15000); // retardo seguro para que se registre el job
             const { monitorearF4Job, runSqlInline } = require("./oracleUtils.js");
             const puedeContinuar = await monitorearF4Job(connectString, baseDatos, async () => {
               const updateSQL = `
@@ -444,8 +429,19 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
     logConsole("✅ Todos los procesos F4 con fecha mayor completados.", runId);
     const baseUrl = page.url().split("/ProcesoCierre")[0] || "https://default.url";
     if (!page.isClosed || !page.isClosed()) {
-      await navegarConRetries(page, `${
+      await navegarConRetries(page, `${baseUrl}/ProcesoCierre/Procesar`);
+      logConsole("🔁 Tabla recargada tras finalizar modo F4 Fecha Mayor — continuando ejecución normal.", runId);
+    } else {
+      logConsole("⚠️ No se pudo recargar tabla (la página fue cerrada).", runId);
+    }
+  } catch (err) {
+    logConsole(`❌ Error general en F4FechaMayor: ${err.message}`, runId);
+  } finally {
+    f4EnEjecucion = false;
+  }
 
+  return "F4_COMPLETADO_MAYOR";
+}
 
 
 function guardarFechaF4Persistente(descripcion, fecha) {
