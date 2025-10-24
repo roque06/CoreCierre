@@ -21,61 +21,68 @@ async function navegarConRetries(page, url, maxRetries = 3) {
 }
 
 /**
- * ⏳ Espera hasta que el proceso cambie a Completado o Error.
- * ✅ Adaptado para evitar bloqueo en "Correr Calendario"
- *    - Si se detecta "Completado" desde tabla principal, termina.
- *    - Si pasa mucho tiempo sin cambio, también rompe el ciclo.
+ * 🧠 Espera perpetuamente a que un proceso específico (F4, F5, etc.)
+ * cambie a estado "Completado" o "Error", sin usar timeout fijo.
+ * Mantiene sincronía con el DOM y reintenta si se pierde contexto.
+ *
+ * @param {import('playwright').Page} page - instancia de Playwright
+ * @param {string} codSistema - código de sistema (ej. "F4")
+ * @param {number|string} codProceso - identificador del proceso
+ * @param {string} descripcion - descripción legible del proceso
+ * @param {string} claveProc - clave combinada (F4-XX)
+ * @param {string} runId - identificador de ejecución global
+ * @returns {Promise<"Completado"|"Error"|"Desconocido">}
  */
-async function esperarCompletado(page, descripcion, runId = "GLOBAL", checkIntervalSec = 30) {
-  const inicio = Date.now();
-  let iteraciones = 0;
-  let estadoPrevio = "";
+async function esperarHastaCompletado(page, codSistema, codProceso, descripcion, claveProc, runId = "GLOBAL") {
   const filaSelector = `#myTable tbody tr:has-text("${descripcion}")`;
+  let estadoPrevio = "";
+  let iteraciones = 0;
+  const inicio = Date.now();
 
-  logConsole(`🕒 Iniciando monitoreo perpetuo para "${descripcion}"...`, runId);
+  logConsole(`🕒 Iniciando monitoreo perpetuo para "${descripcion}" (${codSistema}-${codProceso})...`, runId);
 
   while (true) {
     try {
-      // Esperar que exista la tabla
+      // Verificar tabla visible
       await page.waitForSelector("#myTable tbody tr", { timeout: 60000 });
 
-      // Reubicar fila dinámicamente en cada ciclo
+      // Reubicar fila en cada ciclo
       const fila = page.locator(filaSelector);
       const existe = await fila.count();
       if (existe === 0) {
-        logConsole(`⚠️ Fila de "${descripcion}" no encontrada — posible recarga o cambio en DOM.`, runId);
+        logConsole(`⚠️ Fila de "${descripcion}" no encontrada — posible recarga automática o cambio de DOM.`, runId);
         await page.waitForTimeout(10000);
         continue;
       }
 
-      // Leer texto del estado
-      const estado = ((await fila.locator("td:nth-child(10)").textContent()) || "")
+      // Leer estado visual actual
+      const estadoDom = ((await fila.locator("td:nth-child(10)").textContent()) || "")
         .trim()
         .toUpperCase();
 
-      // Detectar cambios reales
-      if (estado !== estadoPrevio) {
-        logConsole(`📊 "${descripcion}" cambió estado: ${estadoPrevio || "N/A"} → ${estado}`, runId);
-        estadoPrevio = estado;
+      // Registrar cambio de estado
+      if (estadoDom !== estadoPrevio) {
+        logConsole(`📊 "${descripcion}" cambió estado: ${estadoPrevio || "N/A"} → ${estadoDom}`, runId);
+        estadoPrevio = estadoDom;
       }
 
-      // Detectar fin del proceso
-      if (["COMPLETADO", "ERROR"].includes(estado)) {
-        logConsole(`📌 Estado final de "${descripcion}": ${estado}`, runId);
-        return estado;
+      // Detectar estados finales
+      if (["COMPLETADO", "ERROR"].includes(estadoDom)) {
+        logConsole(`📌 Estado final de "${descripcion}": ${estadoDom}`, runId);
+        return estadoDom;
       }
 
-      // Registrar progreso cada cierto número de ciclos
+      // Cada 10 minutos logea un mensaje de “sigue en proceso”
       iteraciones++;
-      if (iteraciones % (600 / checkIntervalSec) === 0) { // cada ~10 min si interval=30s
+      if (iteraciones % 20 === 0) { // (20 ciclos * 30 seg ≈ 10 min)
         const mins = ((Date.now() - inicio) / 60000).toFixed(1);
-        logConsole(`⏳ "${descripcion}" sigue en ${estado || "N/A"} tras ${mins} min...`, runId);
+        logConsole(`⏳ "${descripcion}" sigue en estado ${estadoDom || "N/A"} tras ${mins} min...`, runId);
       }
 
     } catch (err) {
       logConsole(`⚠️ Error monitoreando "${descripcion}": ${err.message}`, runId);
 
-      // Intentar recargar tabla si se pierde el contexto
+      // 🔄 Intentar recargar solo si el contexto se perdió
       try {
         const baseUrl = page.url().split("/ProcesoCierre")[0] || "";
         await navegarConRetries(page, `${baseUrl}/ProcesoCierre/Procesar`);
@@ -85,8 +92,8 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL", checkInter
       }
     }
 
-    // Esperar antes del siguiente ciclo
-    await page.waitForTimeout(checkIntervalSec * 1000);
+    // Espera antes de nuevo ciclo
+    await page.waitForTimeout(30000);
   }
 }
 
