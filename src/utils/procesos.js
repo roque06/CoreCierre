@@ -55,6 +55,8 @@ async function pedirScript(script, baseDatos, runId = "GLOBAL") {
     logConsole(`❌ Error conectando al backend para script ${script}: ${err.message}`, runId);
   }
 }
+// 🧩 Mapa global persistente para evitar reejecuciones de F4 por misma fecha
+const f4FechasProcesadas = new Set();
 
 // =============================================================
 // 🧩 Pre-scripts por descripción
