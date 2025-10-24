@@ -24,17 +24,14 @@ async function navegarConRetries(page, url, maxRetries = 3) {
  * ⏳ Espera hasta que el proceso cambie a Completado o Error.
  */
 async function esperarCompletado(page, descripcion, runId = "GLOBAL") {
-  const filaSelector = `tbody tr:has-text("${descripcion}")`;
+  const fila = page.locator(`tbody tr:has-text("${descripcion}")`);
+  const estadoCell = fila.locator("td").nth(9);
+
   let estado = "";
+  let intentos = 0;
 
   while (true) {
     try {
-      // 🔄 Refrescar la tabla en cada ciclo para obtener el estado real del backend
-      await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
-      await page.waitForSelector("#myTable tbody tr", { timeout: 15000 });
-
-      const fila = page.locator(filaSelector);
-      const estadoCell = fila.locator("td").nth(9);
       estado = ((await estadoCell.textContent()) || "").trim();
 
       if (["Completado", "Error"].includes(estado)) {
@@ -43,14 +40,24 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL") {
       }
 
       logConsole(`⏳ "${descripcion}" sigue en estado: ${estado || "N/A"} → esperando...`, runId);
+
+      intentos++;
+
+      // 🕒 Si el estado sigue igual más de 20 intentos (~10 minutos), corta la espera
+      if (intentos >= 20) {
+        logConsole(`🛑 "${descripcion}" sigue en estado ${estado || "N/A"} tras 10 minutos → forzando salida.`, runId);
+        return estado;
+      }
+
     } catch (err) {
       logConsole(`⚠️ Error leyendo estado de "${descripcion}": ${err.message}`, runId);
     }
 
-    // 🕒 Esperar 30 segundos antes de volver a intentar
+    // 🕒 Espera 30 segundos entre lecturas
     await page.waitForTimeout(30000);
   }
 }
+
 
 
 /**
