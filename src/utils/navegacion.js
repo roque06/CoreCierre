@@ -22,27 +22,56 @@ async function navegarConRetries(page, url, maxRetries = 3) {
 
 /**
  * ⏳ Espera hasta que el proceso cambie a Completado o Error.
+ * ✅ Adaptado para evitar bloqueo en "Correr Calendario"
+ *    - Si se detecta "Completado" desde tabla principal, termina.
+ *    - Si pasa mucho tiempo sin cambio, también rompe el ciclo.
  */
-async function esperarCompletado(page, descripcion, runId = "GLOBAL") {
+async function esperarCompletado(page, descripcion, runId = "GLOBAL", timeoutMin = 10) {
   const filaSelector = `tbody tr:has-text("${descripcion}")`;
   let estado = "";
+  const inicio = Date.now();
 
   while (true) {
     try {
-      // 🔄 Refrescar la tabla en cada ciclo para obtener el estado real del backend
+      // 🔁 Refresca la página para forzar sincronización visual con el backend
       await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
       await page.waitForSelector("#myTable tbody tr", { timeout: 15000 });
 
+      // 🔹 Leer estado de la celda visible
       const fila = page.locator(filaSelector);
       const estadoCell = fila.locator("td").nth(9);
       estado = ((await estadoCell.textContent()) || "").trim();
 
-      if (["Completado", "Error"].includes(estado)) {
-        logConsole(`📌 Estado final de "${descripcion}": ${estado}`, runId);
-        return estado;
+      // 🔹 Lectura secundaria desde tabla (por si DOM cambió)
+      const estadoTabla = await page.evaluate((desc) => {
+        const filas = document.querySelectorAll("tbody tr");
+        for (const tr of filas) {
+          const cols = tr.querySelectorAll("td");
+          if (cols.length < 10) continue;
+          const texto = cols[4].innerText.trim().toUpperCase();
+          if (texto.includes(desc.toUpperCase())) {
+            return cols[9].innerText.trim();
+          }
+        }
+        return "";
+      }, descripcion);
+
+      const estadoFinal = estadoTabla || estado;
+
+      // 🔹 Detecta completado o error
+      if (["Completado", "Error"].includes(estadoFinal)) {
+        logConsole(`📌 Estado final de "${descripcion}": ${estadoFinal}`, runId);
+        return estadoFinal;
       }
 
-      logConsole(`⏳ "${descripcion}" sigue en estado: ${estado || "N/A"} → esperando...`, runId);
+      // 🔹 Timeout de seguridad (por ejemplo 10 min)
+      const elapsedMin = (Date.now() - inicio) / 60000;
+      if (elapsedMin >= timeoutMin) {
+        logConsole(`⚠️ "${descripcion}" sin cambio tras ${timeoutMin} min — forzando continuación.`, runId);
+        return estadoFinal || "Desconocido";
+      }
+
+      logConsole(`⏳ "${descripcion}" sigue en estado: ${estadoFinal || "N/A"} → esperando...`, runId);
     } catch (err) {
       logConsole(`⚠️ Error leyendo estado de "${descripcion}": ${err.message}`, runId);
     }
@@ -51,7 +80,6 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL") {
     await page.waitForTimeout(30000);
   }
 }
-
 
 /**
  * 🔍 Lee el estado actual del proceso en la tabla principal (tolerante y con reintentos)

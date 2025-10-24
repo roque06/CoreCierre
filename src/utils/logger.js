@@ -29,3 +29,4 @@ module.exports = {
   logConsole,
   logWeb,
 };
+// pruebas
