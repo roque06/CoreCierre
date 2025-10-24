@@ -108,7 +108,7 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL") {
 /**
  * 🔍 Selecciona la fila más reciente (mayor fecha en columna 7)
  */
-async function seleccionarFilaMasReciente(page, filas) {
+async function seleccionarFilaMasReciente(page, filas, runId = "GLOBAL") {
   let filaMasReciente = filas.first();
   let fechaMax = new Date(0);
 
@@ -125,7 +125,10 @@ async function seleccionarFilaMasReciente(page, filas) {
     }
   }
 
-  logConsole(`⚙️ Duplicadas detectadas para "${await filas.first().textContent()}" → usando fila con fecha ${fechaMax.toLocaleDateString("es-ES")}`);
+  const descripcionTxt = (await filaMasReciente.locator("td:nth-child(5)").textContent())?.trim() || "N/D";
+  const fechaTxt = fechaMax.toLocaleDateString("es-ES");
+  logConsole(`⚙️ Duplicadas detectadas → usando "${descripcionTxt}" con fecha más reciente ${fechaTxt}`, runId);
+
   return filaMasReciente;
 }
 
