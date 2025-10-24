@@ -576,6 +576,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       const estado = ((await fila.$eval("td:nth-child(10)", el => el.innerText.trim())) || "").toUpperCase();
 
       // --- Omitir filas F4 con fecha menor ---
+      // --- Omitir filas F4 con fecha menor ---
       if (sistema.toUpperCase() === "F4") {
         const fechasF4 = [];
         for (const f of filas) {
@@ -597,6 +598,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           }
         }
       }
+
 
       // --- Procesos en ejecución ---
       if (estado === "EN PROCESO") {
