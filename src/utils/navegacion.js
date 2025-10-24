@@ -21,13 +21,14 @@ async function navegarConRetries(page, url, maxRetries = 3) {
 }
 
 
-async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = "F4") {
+const { monitorearF4Job } = require("./oracleUtils.js");
+
+async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = "F4", connectString = "", baseDatos = "") {
   let estado = "";
   let intentos = 0;
-  const maxIntentos = 200; // seguridad para no quedarse infinito
-  const esperaEntreIntentos = 30000; // 30 segundos entre ciclos
+  const maxIntentos = 200; // límite de seguridad
+  const esperaEntreIntentos = 30000;
 
-  // 🔧 Normalizador de texto (quita tildes, espacios, mayúsculas)
   const normalizar = (txt) =>
     (txt || "")
       .normalize("NFD")
@@ -39,8 +40,6 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = 
   while (intentos < maxIntentos) {
     try {
       intentos++;
-
-      // 🔄 Recargar tabla (esperar DOM listo)
       await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
       await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
 
@@ -48,7 +47,7 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = 
       let filaEncontrada = null;
 
       // ============================================================
-      // 🧩 Buscar la fila correcta
+      // 🧩 Buscar fila correcta
       // ============================================================
       for (const fila of filas) {
         try {
@@ -59,41 +58,30 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = 
             el.innerText.trim().toUpperCase()
           );
 
-          // ✅ Si es F4, comparar sistema y descripción exacta
           if (sistema === "F4") {
-            // Evita confundir con Correr Calendario de F2 o MTC
             if (codSistema === "F4" && normalizar(desc) === normalizar(descripcion)) {
               filaEncontrada = fila;
               break;
             }
-          } else {
-            // 🔹 Para otros sistemas usa coincidencia parcial
-            if (normalizar(desc).includes(normalizar(descripcion))) {
-              filaEncontrada = fila;
-              break;
-            }
+          } else if (normalizar(desc).includes(normalizar(descripcion))) {
+            filaEncontrada = fila;
+            break;
           }
-        } catch { /* ignora errores de fila parcial */ }
+        } catch { }
       }
 
-      // ⚠️ Si no se encontró la fila → reintenta después de esperar
       if (!filaEncontrada) {
-        logConsole(
-          `⚠️ No se encontró la fila para "${descripcion}" (${sistema}) — reintentando (${intentos}/${maxIntentos})...`,
-          runId
-        );
+        logConsole(`⚠️ No se encontró la fila para "${descripcion}" (${sistema}) — reintentando...`, runId);
         await page.waitForTimeout(20000);
         continue;
       }
 
       // ============================================================
-      // 📖 Leer el estado actual del proceso
+      // 📖 Leer estado actual
       // ============================================================
       let estadoCelda = "N/A";
       try {
-        estadoCelda = await filaEncontrada.$eval("td:nth-child(9)", el =>
-          el.innerText.trim().toUpperCase()
-        );
+        estadoCelda = await filaEncontrada.$eval("td:nth-child(9)", el => el.innerText.trim().toUpperCase());
       } catch {
         logConsole(`⚠️ No se pudo leer estado de "${descripcion}" (${sistema}) — reintentando...`, runId);
         await page.waitForTimeout(15000);
@@ -103,34 +91,35 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = 
       estado = estadoCelda || "N/A";
 
       // ============================================================
-      // 🏁 Verificar si completó o dio error
+      // 🏁 Si completó o dio error
       // ============================================================
       if (["COMPLETADO", "ERROR"].includes(estado.toUpperCase())) {
         logConsole(`📌 Estado final de "${descripcion}" (${sistema}): ${estado}`, runId);
         return estado;
       }
 
-      logConsole(
-        `⏳ "${descripcion}" (${sistema}) sigue en estado: ${estado} → esperando... (${intentos}/${maxIntentos})`,
-        runId
-      );
+      // ============================================================
+      // 🧠 Si estado es N/A o sigue sin moverse, verificar job Oracle
+      // ============================================================
+      if (sistema === "F4" && ["N/A", "PENDIENTE"].includes(estado.toUpperCase()) && intentos % 3 === 0) {
+        logConsole(`🧩 Verificando job Oracle para "${descripcion}" (${sistema})...`, runId);
 
+        const hayJob = await monitorearF4Job(connectString, baseDatos, null, runId, { soloDetectar: true });
+        if (!hayJob) {
+          logConsole(`🚫 No hay job Oracle activo para "${descripcion}" (${sistema}) — se ignora proceso y se continúa.`, runId);
+          return "IGNORADO";
+        }
+      }
+
+      logConsole(`⏳ "${descripcion}" (${sistema}) sigue en estado: ${estado} → esperando... (${intentos}/${maxIntentos})`, runId);
     } catch (err) {
-      logConsole(
-        `⚠️ Error leyendo estado de "${descripcion}" (${sistema}): ${err.message}`,
-        runId
-      );
+      logConsole(`⚠️ Error leyendo estado de "${descripcion}" (${sistema}): ${err.message}`, runId);
     }
 
-    // 🕒 Esperar antes del siguiente intento
     await page.waitForTimeout(esperaEntreIntentos);
   }
 
-  // 🚨 Si llegó aquí, se agotaron los intentos
-  logConsole(
-    `🛑 Se alcanzó el máximo de intentos esperando "${descripcion}" (${sistema}) — último estado conocido: ${estado}`,
-    runId
-  );
+  logConsole(`🛑 Se alcanzó el máximo de intentos esperando "${descripcion}" (${sistema}) — último estado conocido: ${estado}`, runId);
   return estado;
 }
 
