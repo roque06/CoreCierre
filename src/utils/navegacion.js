@@ -21,12 +21,12 @@ async function navegarConRetries(page, url, maxRetries = 3) {
 }
 
 
-const { monitorearF4Job } = require("./oracleUtils.js");
+const { monitorearF4Job, runSqlInline } = require("./oracleUtils.js");
 
 async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = "F4", connectString = "", baseDatos = "") {
   let estado = "";
   let intentos = 0;
-  const maxIntentos = 200; // límite de seguridad
+  const maxIntentos = 200;
   const esperaEntreIntentos = 30000;
 
   const normalizar = (txt) =>
@@ -46,17 +46,10 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = 
       const filas = await page.$$("#myTable tbody tr");
       let filaEncontrada = null;
 
-      // ============================================================
-      // 🧩 Buscar fila correcta
-      // ============================================================
       for (const fila of filas) {
         try {
-          const codSistema = await fila.$eval("td:nth-child(3)", el =>
-            el.innerText.trim().toUpperCase()
-          );
-          const desc = await fila.$eval("td:nth-child(5)", el =>
-            el.innerText.trim().toUpperCase()
-          );
+          const codSistema = await fila.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase());
+          const desc = await fila.$eval("td:nth-child(5)", el => el.innerText.trim().toUpperCase());
 
           if (sistema === "F4") {
             if (codSistema === "F4" && normalizar(desc) === normalizar(descripcion)) {
@@ -76,9 +69,6 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = 
         continue;
       }
 
-      // ============================================================
-      // 📖 Leer estado actual
-      // ============================================================
       let estadoCelda = "N/A";
       try {
         estadoCelda = await filaEncontrada.$eval("td:nth-child(9)", el => el.innerText.trim().toUpperCase());
@@ -91,6 +81,34 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = 
       estado = estadoCelda || "N/A";
 
       // ============================================================
+      // 🧩 CASO ESPECIAL: F4-5 “Aplicación de Transferencias Automáticas”
+      // ============================================================
+      if (
+        sistema === "F4" &&
+        normalizar(descripcion) === normalizar("Aplicación de Transferencias Automáticas")
+      ) {
+        logConsole(`⚙️ Proceso F4-5 detectado → ejecutando UPDATE forzado en bitácora y omitiendo espera.`, runId);
+        const updateSQL = `
+          UPDATE PA.PA_BITACORA_PROCESO_CIERRE
+             SET ESTATUS='T', FECHA_FIN = SYSDATE
+           WHERE COD_SISTEMA='F4'
+             AND COD_PROCESO=5
+             AND TRUNC(FECHA) = (
+               SELECT TRUNC(MAX(x.FECHA))
+                 FROM PA.PA_BITACORA_PROCESO_CIERRE x
+                WHERE x.COD_SISTEMA='F4'
+                  AND x.COD_PROCESO=5
+             )`;
+        const ok = await runSqlInline(updateSQL, connectString);
+        if (ok) {
+          logConsole(`✅ Bitácora actualizada correctamente para F4-5 (forzado).`, runId);
+        } else {
+          logConsole(`⚠️ No se pudo actualizar bitácora Oracle para F4-5.`, runId);
+        }
+        return "IGNORADO"; // se omite espera
+      }
+
+      // ============================================================
       // 🏁 Si completó o dio error
       // ============================================================
       if (["COMPLETADO", "ERROR"].includes(estado.toUpperCase())) {
@@ -99,11 +117,9 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = 
       }
 
       // ============================================================
-      // 🧠 Si estado es N/A o sigue sin moverse, verificar job Oracle
+      // 🧠 Si F4 genérico y sin job Oracle activo → salir
       // ============================================================
       if (sistema === "F4" && ["N/A", "PENDIENTE"].includes(estado.toUpperCase()) && intentos % 3 === 0) {
-        logConsole(`🧩 Verificando job Oracle para "${descripcion}" (${sistema})...`, runId);
-
         const hayJob = await monitorearF4Job(connectString, baseDatos, null, runId, { soloDetectar: true });
         if (!hayJob) {
           logConsole(`🚫 No hay job Oracle activo para "${descripcion}" (${sistema}) — se ignora proceso y se continúa.`, runId);
@@ -122,6 +138,7 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = 
   logConsole(`🛑 Se alcanzó el máximo de intentos esperando "${descripcion}" (${sistema}) — último estado conocido: ${estado}`, runId);
   return estado;
 }
+
 
 
 
