@@ -267,7 +267,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         const sistema = (await fila.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase())) || "";
         const fechaTxt = (await fila.$eval("td:nth-child(7)", el => el.innerText.trim())) || "";
         if (sistema === "F4" && fechaTxt) fechasF4.push(fechaTxt);
-      } catch { }
+      } catch {}
     }
 
     const fechasValidas = fechasF4
