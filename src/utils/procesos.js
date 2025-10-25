@@ -343,7 +343,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
     }
 
     // ============================================================
-    // 3️⃣ Procesar procesos F4 (fecha menor)
+    // 3️⃣ Procesar procesos F4
     // ============================================================
     const filasActuales = await page.$$("#myTable tbody tr");
 
@@ -363,22 +363,54 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
           continue;
         }
 
+        const link = await fila.$("a[href*='CodProceso']");
+        const href = (await link?.getAttribute("href")) || "";
+        const codSistema = href.match(/CodSistema=([^&]+)/i)?.[1] || "F4";
+        const codProceso = href.match(/CodProceso=([^&]+)/i)?.[1] || "0";
+        const claveProc = `${codSistema}-${codProceso}`;
+
         // ============================================================
         // 🧩 Caso especial: Correr Calendario
         // ============================================================
         if (descripcion.toUpperCase().includes("CORRER CALENDARIO")) {
           if (procesosActualizados.has("F4-CORRER_CALENDARIO_FINALIZADO")) {
             logConsole("ℹ️ Correr Calendario (F4) ya fue finalizado previamente — no se reejecuta.", runId);
-            continue;
+          } else {
+            logConsole(`🧩 [F4 Fecha Mayor] Correr Calendario detectado → forzando estado 'P' y monitoreo especial.`, runId);
+
+            const updateSQL = `
+              UPDATE PA.PA_BITACORA_PROCESO_CIERRE
+                 SET ESTATUS='P', FECHA_INICIO=SYSDATE
+               WHERE COD_SISTEMA='${codSistema}'
+                 AND COD_PROCESO=${codProceso}
+                 AND TRUNC(FECHA) = (
+                   SELECT TRUNC(MAX(x.FECHA))
+                     FROM PA.PA_BITACORA_PROCESO_CIERRE x
+                    WHERE x.COD_SISTEMA='${codSistema}'
+                      AND x.COD_PROCESO=${codProceso}
+                 )`;
+
+            await fetch("http://127.0.0.1:4000/api/run-script", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ baseDatos, script: "inline", connectString, sqlInline: updateSQL }),
+            });
+
+            logConsole(`✅ Correr Calendario marcado 'P' (${claveProc})`, runId);
+
+            const estadoFinal = await esperarCorrerCalendarioF4(page, baseDatos, connectString, runId);
+            if (estadoFinal !== "COMPLETADO") {
+              logConsole(`⚠️ [F4 Fecha Mayor] Correr Calendario terminó con estado '${estadoFinal}' → continuando flujo.`, runId);
+            }
+
+            logConsole(`🏁 Correr Calendario completado (fecha mayor).`, runId);
+            procesosActualizados.add("F4-CORRER_CALENDARIO_FINALIZADO");
           }
-
-          logConsole(`🧩 [F4 Fecha Mayor] Correr Calendario detectado → forzando estado 'P' y monitoreo especial.`, runId);
-
-          const link = await fila.$("a[href*='CodProceso']");
-          const href = (await link?.getAttribute("href")) || "";
-          const codSistema = href.match(/CodSistema=([^&]+)/i)?.[1] || "F4";
-          const codProceso = href.match(/CodProceso=([^&]+)/i)?.[1] || "0";
-          const claveProc = `${codSistema}-${codProceso}`;
+        } else {
+          // ============================================================
+          // 🔸 Procesos F4 normales
+          // ============================================================
+          if (procesosActualizados.has(claveProc)) continue;
 
           const updateSQL = `
             UPDATE PA.PA_BITACORA_PROCESO_CIERRE
@@ -392,66 +424,33 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
                     AND x.COD_PROCESO=${codProceso}
                )`;
 
-          if (!procesosActualizados.has(claveProc)) {
-            await fetch("http://127.0.0.1:4000/api/run-script", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ baseDatos, script: "inline", connectString, sqlInline: updateSQL }),
-            });
-            logConsole(`✅ Correr Calendario marcado 'P' (${claveProc})`, runId);
-            procesosActualizados.add(claveProc);
-          }
+          await fetch("http://127.0.0.1:4000/api/run-script", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ baseDatos, script: "inline", connectString, sqlInline: updateSQL }),
+          });
 
-          const estadoFinal = await esperarCorrerCalendarioF4(page, baseDatos, connectString, runId);
-          if (estadoFinal !== "COMPLETADO") {
-            logConsole(`⚠️ [F4 Fecha Mayor] Correr Calendario terminó con estado '${estadoFinal}' → continuando flujo sin bloqueo.`, runId);
-          }
+          logConsole(`✅ ${descripcion} marcado 'P' (${claveProc})`, runId);
+          procesosActualizados.add(claveProc);
 
-          logConsole(`🏁 Correr Calendario completado (fecha mayor) — continuando con los demás F4...`, runId);
-          procesosActualizados.add("F4-CORRER_CALENDARIO_FINALIZADO");
-          continue;
+          const t0 = Date.now();
+          const resultado = await esperarHastaCompletado(page, codSistema, codProceso, descripcion, claveProc, runId);
+          const duracion = ((Date.now() - t0) / 60000).toFixed(2);
+          logConsole(`✅ ${descripcion}. Completado en ${duracion} min`, runId);
         }
 
         // ============================================================
-        // 🔸 Procesos F4 normales
+        // 🧩 Ejecutar script final de cierre F4
         // ============================================================
-        const link = await fila.$("a[href*='CodProceso']");
-        const href = (await link?.getAttribute("href")) || "";
-        const codSistema = href.match(/CodSistema=([^&]+)/i)?.[1] || "F4";
-        const codProceso = href.match(/CodProceso=([^&]+)/i)?.[1] || "0";
-        const claveProc = `${codSistema}-${codProceso}`;
-        if (procesosActualizados.has(claveProc)) continue;
-
-        const updateSQL = `
-          UPDATE PA.PA_BITACORA_PROCESO_CIERRE
-             SET ESTATUS='P', FECHA_INICIO=SYSDATE
-           WHERE COD_SISTEMA='${codSistema}'
-             AND COD_PROCESO=${codProceso}
-             AND TRUNC(FECHA) = (
-               SELECT TRUNC(MAX(x.FECHA))
-                 FROM PA.PA_BITACORA_PROCESO_CIERRE x
-                WHERE x.COD_SISTEMA='${codSistema}'
-                  AND x.COD_PROCESO=${codProceso}
-             )`;
-
-        await fetch("http://127.0.0.1:4000/api/run-script", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ baseDatos, script: "inline", connectString, sqlInline: updateSQL }),
-        });
-
-        logConsole(`✅ ${descripcion} marcado 'P' (${claveProc})`, runId);
-        procesosActualizados.add(claveProc);
-
-        const t0 = Date.now();
-        const resultado = await esperarHastaCompletado(page, codSistema, codProceso, descripcion, claveProc, runId);
-        const duracion = ((Date.now() - t0) / 60000).toFixed(2);
-        logConsole(`✅ ${descripcion}. Completado en ${duracion} min`, runId);
-
-        // 🧩 Si es el último proceso (Generación Saldos Contabilizados), ejecutar SQL final
-        if (descripcion.toUpperCase().includes("GENERACION SALDOS CONTABILIZADOS") && codSistema === "F4") {
+        if (
+          (
+            descripcion.toUpperCase().includes("CORRER CALENDARIO") ||
+            descripcion.toUpperCase().includes("GENERACION SALDOS CONTABILIZADOS")
+          ) &&
+          !procesosActualizados.has("F4_FINAL_T_EJECUTADO")
+        ) {
           try {
-            logConsole("🏁 Detectado proceso final F4 (Generación Saldos Contabilizados) → ejecutando cierre lógico.", runId);
+            logConsole("🏁 Detectado último proceso F4 (Correr Calendario o Generación Saldos Contabilizados) → ejecutando cierre lógico.", runId);
             const sqlFinal = `
               UPDATE PA.PA_BITACORA_PROCESO_CIERRE
                  SET ESTATUS='T'
@@ -464,6 +463,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
             });
 
             logConsole("✅ Script final ejecutado — todos los procesos F4 marcados como 'T'.", runId);
+            procesosActualizados.add("F4_FINAL_T_EJECUTADO");
           } catch (err) {
             logConsole(`⚠️ Error ejecutando script final de cierre F4: ${err.message}`, runId);
           }
