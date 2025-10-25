@@ -23,7 +23,6 @@ async function navegarConRetries(page, url, maxRetries = 3) {
 
 const { monitorearF4Job, runSqlInline } = require("./oracleUtils.js");
 
-const { monitorearF4Job, runSqlInline } = require("./oracleUtils.js");
 
 async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = "F4", connectString = "", baseDatos = "") {
   let estado = "";
