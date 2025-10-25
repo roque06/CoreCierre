@@ -408,8 +408,8 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
           }
 
           logConsole(`🏁 Correr Calendario completado (fecha mayor) — continuando con los demás F4...`, runId);
-          procesosActualizados.add("F4-CORRER_CALENDARIO_FINALIZADO"); // ✅ evitar reejecución
-          continue; // salta al siguiente proceso
+          procesosActualizados.add("F4-CORRER_CALENDARIO_FINALIZADO");
+          continue;
         }
 
         // ============================================================
@@ -447,6 +447,27 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         const resultado = await esperarHastaCompletado(page, codSistema, codProceso, descripcion, claveProc, runId);
         const duracion = ((Date.now() - t0) / 60000).toFixed(2);
         logConsole(`✅ ${descripcion}. Completado en ${duracion} min`, runId);
+
+        // 🧩 Si es el último proceso (Generación Saldos Contabilizados), ejecutar SQL final
+        if (descripcion.toUpperCase().includes("GENERACION SALDOS CONTABILIZADOS") && codSistema === "F4") {
+          try {
+            logConsole("🏁 Detectado proceso final F4 (Generación Saldos Contabilizados) → ejecutando cierre lógico.", runId);
+            const sqlFinal = `
+              UPDATE PA.PA_BITACORA_PROCESO_CIERRE
+                 SET ESTATUS='T'
+               WHERE COD_SISTEMA='F4'`;
+
+            await fetch("http://127.0.0.1:4000/api/run-script", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ baseDatos, script: "inline", connectString, sqlInline: sqlFinal }),
+            });
+
+            logConsole("✅ Script final ejecutado — todos los procesos F4 marcados como 'T'.", runId);
+          } catch (err) {
+            logConsole(`⚠️ Error ejecutando script final de cierre F4: ${err.message}`, runId);
+          }
+        }
 
       } catch (errFila) {
         logConsole(`⚠️ Error en proceso F4 especial: ${errFila.message}`, runId);
