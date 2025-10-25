@@ -357,22 +357,28 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         const fechaTxt = (await fila.$eval("td:nth-child(7)", el => el.innerText.trim())) || "";
         const fechaObj = new Date(fechaTxt.split("/").reverse().join("-"));
 
+        // 🚫 Omitir si ya está completado o con fecha igual/mayor
         if (estado === "COMPLETADO" || fechaObj.getTime() >= fechaMayor.getTime()) {
           logConsole(`⏭️ ${descripcion} ya completado o con fecha igual/mayor — omitido.`, runId);
           continue;
         }
 
-        const link = await fila.$("a[href*='CodProceso']");
-        const href = (await link?.getAttribute("href")) || "";
-        const codSistema = href.match(/CodSistema=([^&]+)/i)?.[1] || "F4";
-        const codProceso = href.match(/CodProceso=([^&]+)/i)?.[1] || "0";
-        const claveProc = `${codSistema}-${codProceso}`;
-
         // ============================================================
         // 🧩 Caso especial: Correr Calendario
         // ============================================================
         if (descripcion.toUpperCase().includes("CORRER CALENDARIO")) {
+          if (procesosActualizados.has("F4-CORRER_CALENDARIO_FINALIZADO")) {
+            logConsole("ℹ️ Correr Calendario (F4) ya fue finalizado previamente — no se reejecuta.", runId);
+            continue;
+          }
+
           logConsole(`🧩 [F4 Fecha Mayor] Correr Calendario detectado → forzando estado 'P' y monitoreo especial.`, runId);
+
+          const link = await fila.$("a[href*='CodProceso']");
+          const href = (await link?.getAttribute("href")) || "";
+          const codSistema = href.match(/CodSistema=([^&]+)/i)?.[1] || "F4";
+          const codProceso = href.match(/CodProceso=([^&]+)/i)?.[1] || "0";
+          const claveProc = `${codSistema}-${codProceso}`;
 
           const updateSQL = `
             UPDATE PA.PA_BITACORA_PROCESO_CIERRE
@@ -394,8 +400,6 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
             });
             logConsole(`✅ Correr Calendario marcado 'P' (${claveProc})`, runId);
             procesosActualizados.add(claveProc);
-          } else {
-            logConsole(`ℹ️ Correr Calendario (${claveProc}) ya fue marcado previamente — no se repite.`, runId);
           }
 
           const estadoFinal = await esperarCorrerCalendarioF4(page, baseDatos, connectString, runId);
@@ -404,12 +408,20 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
           }
 
           logConsole(`🏁 Correr Calendario completado (fecha mayor) — continuando con los demás F4...`, runId);
-          // ⚠️ No hacemos "continue" — sigue el bucle normalmente
+          procesosActualizados.add("F4-CORRER_CALENDARIO_FINALIZADO"); // ✅ evitar reejecución
+          continue; // salta al siguiente proceso
         }
 
         // ============================================================
         // 🔸 Procesos F4 normales
         // ============================================================
+        const link = await fila.$("a[href*='CodProceso']");
+        const href = (await link?.getAttribute("href")) || "";
+        const codSistema = href.match(/CodSistema=([^&]+)/i)?.[1] || "F4";
+        const codProceso = href.match(/CodProceso=([^&]+)/i)?.[1] || "0";
+        const claveProc = `${codSistema}-${codProceso}`;
+        if (procesosActualizados.has(claveProc)) continue;
+
         const updateSQL = `
           UPDATE PA.PA_BITACORA_PROCESO_CIERRE
              SET ESTATUS='P', FECHA_INICIO=SYSDATE
@@ -453,7 +465,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
     logConsole(`❌ Error general en F4FechaMayor: ${err.message}`, runId);
   } finally {
     f4EnEjecucion = false;
-    global.__f4ModoEspecialActivo = false; // 🔻 modo especial desactivado
+    global.__f4ModoEspecialActivo = false;
     logConsole("🚀 [F4 Fecha Mayor] Todos los procesos completados — devolviendo control al flujo normal.", runId);
   }
 
