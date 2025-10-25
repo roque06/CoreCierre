@@ -528,9 +528,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       // ============================================================
       // 🧩 🔸 CASO ESPECIAL: "CORRER CALENDARIO"
       // ============================================================
-      // ============================================================
-      // 🧩 🔸 CASO ESPECIAL: "CORRER CALENDARIO"
-      // ============================================================
       const descUpper = descripcion.toUpperCase();
       if (descUpper.includes("CORRER CALENDARIO")) {
         if (sistema === "F4") {
