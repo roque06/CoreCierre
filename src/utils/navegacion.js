@@ -28,32 +28,47 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = 
   let estado = "";
   let intentos = 0;
   const maxIntentos = 200;
+  const esperaEntreIntentos = 30000;
+
   const normalizar = (txt) =>
-    (txt || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toUpperCase();
+    (txt || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toUpperCase();
 
   while (intentos < maxIntentos) {
     intentos++;
+
     try {
+      // 🔄 Refrescar tabla
       await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
-      await page.waitForSelector("#myTable tbody tr", { timeout: 15000 });
+      await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
 
       const filas = await page.$$("#myTable tbody tr");
       let filaEncontrada = null;
 
+      // ============================================================
+      // 🧩 Buscar fila correcta (filtrado por sistema + descripción exacta)
+      // ============================================================
       for (const fila of filas) {
         try {
-          // 👇 el sistema siempre en la 1ra o 3ra columna, detectamos dinámicamente
+          // Detectar columna donde está el sistema (1 o 3)
           let codSistema = "";
           for (const idx of [1, 3]) {
             try {
               const txt = await fila.$eval(`td:nth-child(${idx})`, el => el.innerText.trim().toUpperCase());
-              if (["F2", "F4", "F5", "MTC"].includes(txt)) { codSistema = txt; break; }
+              if (["F2", "F4", "F5", "MTC"].includes(txt)) {
+                codSistema = txt;
+                break;
+              }
             } catch { }
           }
 
           const desc = await fila.$eval("td:nth-child(5)", el => el.innerText.trim().toUpperCase());
 
-          // ✅ Solo considerar coincidencias exactas del sistema
+          // ✅ Filtrar solo coincidencias exactas del sistema
           if (codSistema === sistema.toUpperCase()) {
             if (normalizar(desc) === normalizar(descripcion)) {
               filaEncontrada = fila;
@@ -69,27 +84,82 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = 
         continue;
       }
 
-      // 📖 Leer estado actual
+      // ============================================================
+      // 📖 Leer estado actual del proceso
+      // ============================================================
       let estadoCelda = "N/A";
       try {
         estadoCelda = await filaEncontrada.$eval("td:nth-child(9)", el => el.innerText.trim().toUpperCase());
-      } catch {
-        logConsole(`⚠️ No se pudo leer estado de "${descripcion}" (${sistema})`, runId);
-        await page.waitForTimeout(10000);
+      } catch (err) {
+        logConsole(`⚠️ No se pudo leer estado de "${descripcion}" (${sistema}): ${err.message}`, runId);
+        await page.waitForTimeout(15000);
         continue;
       }
 
       estado = estadoCelda || "N/A";
 
-      // ✅ Detectar COMPLETADO / ERROR
+      // ============================================================
+      // 🧩 CASO ESPECIAL: F4-5 (Aplicación de Transferencias Automáticas)
+      // ============================================================
+      if (sistema === "F4" && normalizar(descripcion) === normalizar("Aplicación de Transferencias Automáticas")) {
+        logConsole(`⚙️ Proceso F4-5 detectado → ejecutando UPDATE forzado en bitácora y omitiendo espera.`, runId);
+        const updateSQL = `
+          UPDATE PA.PA_BITACORA_PROCESO_CIERRE
+             SET ESTATUS='T', FECHA_FIN = SYSDATE
+           WHERE COD_SISTEMA='F4'
+             AND COD_PROCESO=5
+             AND TRUNC(FECHA) = (
+               SELECT TRUNC(MAX(x.FECHA))
+                 FROM PA.PA_BITACORA_PROCESO_CIERRE x
+                WHERE x.COD_SISTEMA='F4'
+                  AND x.COD_PROCESO=5
+             )`;
+        try {
+          const { runSqlInline } = require("./oracleUtils.js");
+          const ok = await runSqlInline(updateSQL, connectString);
+          logConsole(ok ? `✅ Bitácora actualizada correctamente para F4-5.` : `⚠️ No se pudo actualizar bitácora para F4-5.`, runId);
+        } catch (e) {
+          logConsole(`❌ Error ejecutando SQL inline (F4-5): ${e.message}`, runId);
+        }
+        return "IGNORADO";
+      }
+
+      // ============================================================
+      // 🧩 CASO ESPECIAL: F4-16 (Correr Calendario)
+      // ============================================================
+      if (sistema === "F4" && normalizar(descripcion) === normalizar("Correr Calendario")) {
+        logConsole(`⚙️ Proceso F4-16 'Correr Calendario' detectado → forzando cierre automático.`, runId);
+        const updateSQL = `
+          UPDATE PA.PA_BITACORA_PROCESO_CIERRE
+             SET ESTATUS='T', FECHA_FIN = SYSDATE
+           WHERE COD_SISTEMA='F4'
+             AND COD_PROCESO=16
+             AND TRUNC(FECHA) = (
+               SELECT TRUNC(MAX(x.FECHA))
+                 FROM PA.PA_BITACORA_PROCESO_CIERRE x
+                WHERE x.COD_SISTEMA='F4'
+                  AND x.COD_PROCESO=16
+             )`;
+        try {
+          const { runSqlInline } = require("./oracleUtils.js");
+          const ok = await runSqlInline(updateSQL, connectString);
+          logConsole(ok ? `✅ Bitácora actualizada correctamente para F4-16 (Correr Calendario).` : `⚠️ No se pudo actualizar bitácora para F4-16.`, runId);
+        } catch (e) {
+          logConsole(`❌ Error ejecutando SQL inline (F4-16): ${e.message}`, runId);
+        }
+        return "IGNORADO";
+      }
+
+      // ============================================================
+      // 🏁 Detectar fin del proceso
+      // ============================================================
       if (["COMPLETADO", "ERROR"].includes(estado)) {
         logConsole(`📌 Estado final de "${descripcion}" (${sistema}): ${estado}`, runId);
         return estado;
       }
 
-      // ✅ Detectar timestamp (como COMPLETADO)
       if (/^\d{1,2}\/\d{1,2}\/\d{4}\.\d{1,2}:\d{2}(AM|PM)$/i.test(estado)) {
-        logConsole(`📅 Estado timestamp detectado para "${descripcion}" → interpretado como COMPLETADO.`, runId);
+        logConsole(`📅 Estado con timestamp detectado ("${estado}") → interpretado como COMPLETADO.`, runId);
         return "COMPLETADO";
       }
 
@@ -98,10 +168,10 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = 
       logConsole(`⚠️ Error leyendo estado de "${descripcion}" (${sistema}): ${err.message}`, runId);
     }
 
-    await page.waitForTimeout(30000);
+    await page.waitForTimeout(esperaEntreIntentos);
   }
 
-  logConsole(`🛑 Máximo de intentos alcanzado esperando "${descripcion}" (${sistema}) — último estado: ${estado}`, runId);
+  logConsole(`🛑 Se alcanzó el máximo de intentos esperando "${descripcion}" (${sistema}) — último estado: ${estado}`, runId);
   return estado;
 }
 
