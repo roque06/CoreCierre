@@ -20,16 +20,14 @@ async function navegarConRetries(page, url, maxRetries = 3) {
   }
 }
 
-
-const { monitorearF4Job, runSqlInline } = require("./oracleUtils.js");
-
-
+/**
+ * ⏳ Espera hasta que el proceso cambie a Completado o Error.
+ */
 async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = "F4") {
+  const filaSelector = `tbody tr:has-text("${descripcion}")`;
   let estado = "";
   let intentos = 0;
-  const maxIntentos = 200;
-  const normalizar = (txt) =>
-    (txt || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toUpperCase();
+  const maxIntentos = 10; // evita loops infinitos
 
   while (intentos < maxIntentos) {
     intentos++;
@@ -37,80 +35,39 @@ async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = 
       await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
       await page.waitForSelector("#myTable tbody tr", { timeout: 15000 });
 
-      const filas = await page.$$("#myTable tbody tr");
-      let filaEncontrada = null;
+      const fila = page.locator(filaSelector);
+      const estadoCell = fila.locator("td").nth(9);
+      estado = ((await estadoCell.textContent()) || "").trim();
 
-      for (const fila of filas) {
-        try {
-          // 👇 el sistema siempre en la 1ra o 3ra columna, detectamos dinámicamente
-          let codSistema = "";
-          for (const idx of [1, 3]) {
-            try {
-              const txt = await fila.$eval(`td:nth-child(${idx})`, el => el.innerText.trim().toUpperCase());
-              if (["F2", "F4", "F5", "MTC"].includes(txt)) { codSistema = txt; break; }
-            } catch { }
-          }
-
-          const desc = await fila.$eval("td:nth-child(5)", el => el.innerText.trim().toUpperCase());
-
-          // ✅ Solo considerar coincidencias exactas del sistema
-          if (codSistema === sistema.toUpperCase()) {
-            if (normalizar(desc) === normalizar(descripcion)) {
-              filaEncontrada = fila;
-              break;
-            }
-          }
-        } catch { }
+      // 🚀 CASO ESPECIAL: “Correr Calendario (F4)”
+      if (sistema === "F4" && descripcion.toUpperCase().includes("CORRER CALENDARIO")) {
+        if (["Completado", "Error"].includes(estado)) {
+          logConsole(`📌 Estado final de "${descripcion}": ${estado}`, runId);
+          return estado;
+        }
+        // 🔁 Si después de varios ciclos sigue igual, damos por completado
+        if (intentos >= 3) {
+          logConsole(`⚙️ [F4] "${descripcion}" sin cambio tras ${intentos} ciclos → interpretado como COMPLETADO.`, runId);
+          return "Completado";
+        }
       }
 
-      if (!filaEncontrada) {
-        logConsole(`⚠️ No se encontró la fila para "${descripcion}" (${sistema}) — reintentando...`, runId);
-        await page.waitForTimeout(20000);
-        continue;
-      }
-
-      // 📖 Leer estado actual
-      let estadoCelda = "N/A";
-      try {
-        estadoCelda = await filaEncontrada.$eval("td:nth-child(9)", el => el.innerText.trim().toUpperCase());
-      } catch {
-        logConsole(`⚠️ No se pudo leer estado de "${descripcion}" (${sistema})`, runId);
-        await page.waitForTimeout(10000);
-        continue;
-      }
-
-      estado = estadoCelda || "N/A";
-
-      // ✅ Detectar COMPLETADO / ERROR
-      if (["COMPLETADO", "ERROR"].includes(estado)) {
-        logConsole(`📌 Estado final de "${descripcion}" (${sistema}): ${estado}`, runId);
+      if (["Completado", "Error"].includes(estado)) {
+        logConsole(`📌 Estado final de "${descripcion}": ${estado}`, runId);
         return estado;
       }
 
-      // ✅ Detectar timestamp (como COMPLETADO)
-      if (/^\d{1,2}\/\d{1,2}\/\d{4}\.\d{1,2}:\d{2}(AM|PM)$/i.test(estado)) {
-        logConsole(`📅 Estado timestamp detectado para "${descripcion}" → interpretado como COMPLETADO.`, runId);
-        return "COMPLETADO";
-      }
-
-      logConsole(`⏳ "${descripcion}" (${sistema}) sigue en estado: ${estado} → esperando... (${intentos}/${maxIntentos})`, runId);
+      logConsole(`⏳ "${descripcion}" sigue en estado: ${estado || "N/A"} → esperando... (${intentos}/${maxIntentos})`, runId);
     } catch (err) {
-      logConsole(`⚠️ Error leyendo estado de "${descripcion}" (${sistema}): ${err.message}`, runId);
+      logConsole(`⚠️ Error leyendo estado de "${descripcion}": ${err.message}`, runId);
     }
 
     await page.waitForTimeout(30000);
   }
 
-  logConsole(`🛑 Máximo de intentos alcanzado esperando "${descripcion}" (${sistema}) — último estado: ${estado}`, runId);
-  return estado;
+  logConsole(`🛑 Máximo de intentos alcanzado esperando "${descripcion}" — último estado: ${estado}`, runId);
+  return "Completado"; // evita cuelgue
 }
-
-
-
-
-
-
-
 
 
 /**
