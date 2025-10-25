@@ -455,7 +455,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
     const descNorm = normalize(descripcionActual);
     const actual = parseFecha(fechaTxt);
-
     if (!actual) {
       logConsole(`⚠️ [F4] ${descNorm}: no tiene fecha válida, se omite comparación.`, runId);
       return false;
@@ -531,7 +530,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       // ============================================================
       const descUpper = descripcion.toUpperCase();
       if (descUpper.includes("CORRER CALENDARIO")) {
-        // Si es F4, procesar con manejo de DOM seguro
         if (sistema === "F4") {
           logConsole(`🧩 [Excepción Correr Calendario] — F4 permitido`, runId);
           try {
@@ -540,33 +538,49 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
               await boton.scrollIntoViewIfNeeded();
               await boton.click({ force: true }).catch(() => { });
               logConsole(`🖱 Click seguro ejecutado en "Correr Calendario (F4)"`, runId);
-
-              // Espera cambio de estado tolerante a DOM reload
-              let intentos = 0;
-              while (intentos < 30) {
-                await page.waitForTimeout(3000);
-                const badgeTxt = await fila.locator("td .badge").textContent().catch(() => null);
-                if (!badgeTxt) {
-                  intentos++;
-                  continue;
-                }
-                const estadoNow = badgeTxt.trim().toUpperCase();
-                if (["COMPLETADO", "ERROR"].includes(estadoNow)) {
-                  logConsole(`📊 Correr Calendario F4 finalizó con estado ${estadoNow}`, runId);
-                  break;
-                }
-                intentos++;
-              }
             }
+
+            // 🕒 Monitoreo robusto con recuperación DOM
+            let intentos = 0;
+            let estadoNow = "";
+            while (intentos < 40) {
+              await page.waitForTimeout(4000);
+              try {
+                const badgeTxt = await fila.locator("td .badge").textContent();
+                estadoNow = (badgeTxt || "").trim().toUpperCase();
+              } catch (domErr) {
+                logConsole(`⚠️ DOM recargado durante Correr Calendario: ${domErr.message}`, runId);
+                await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
+                await page.waitForSelector("#myTable tbody tr", { timeout: 15000 });
+                const nuevaFila = await page.locator(`#myTable tbody tr:has-text("Correr Calendario")`).first();
+                if (await nuevaFila.count()) fila = nuevaFila;
+                continue;
+              }
+
+              if (["COMPLETADO", "ERROR"].includes(estadoNow)) {
+                logConsole(`📊 Correr Calendario F4 finalizó con estado ${estadoNow}`, runId);
+                break;
+              }
+
+              if (estadoNow === "PENDIENTE" && intentos > 30) {
+                logConsole(`⏱️ Correr Calendario sigue en PENDIENTE >2min → se asume completado.`, runId);
+                break;
+              }
+
+              intentos++;
+            }
+
+            logConsole(`✅ [F4] Correr Calendario controlado — evitando bloqueo.`, runId);
           } catch (err) {
             logConsole(`⚠️ Error controlado en Correr Calendario F4: ${err.message}`, runId);
           }
-          // Siempre continuar flujo sin romper iteración
+
+          // 🔄 Refrescar tabla y continuar flujo normal
           await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
+          await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
           filas = await page.$$("#myTable tbody tr");
           continue;
         } else {
-          // Si no es F4, lo ignoramos
           logConsole(`⏭️ [Excepción Correr Calendario] — ${sistema} ignorado (no ejecutado)`, runId);
           continue;
         }
@@ -686,7 +700,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   return "Completado";
 }
-
 
 
 
