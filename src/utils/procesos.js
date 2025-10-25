@@ -515,22 +515,13 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       // ============================================================
       if (estado === "EN PROCESO") {
         logConsole(`⏸️ ${descripcion} está en proceso — esperando que finalice.`, runId);
-
-        // 🔹 Si es F4 pero el usuario seleccionó F5 en el front → saltar los F4
-        if (sistema === "F4" && global.procesosSeleccionados?.includes("F5")) {
-          logConsole(`⚙️ [F5 seleccionado] Saltando procesos F4 para continuar con F5.`, runId);
-          return "SALTAR_F4";
-        }
-
-        // 🔹 Si es “Correr Calendario (F4)” → evitar cuelgue
-        const resultado = await esperarCompletado(page, descripcion, runId, sistema);
+        const resultado = await esperarCompletado(page, descripcion, runId);
         if (resultado === "Error") {
           logConsole(`❌ ${descripcion} terminó con error — deteniendo ejecución.`, runId);
           break;
         }
         continue;
       }
-
 
       if (procesosEjecutadosGlobal.has(descripcion.toUpperCase())) continue;
       if (!["PENDIENTE", "ERROR"].includes(estado)) continue;
