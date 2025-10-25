@@ -181,11 +181,15 @@ const recoveryScripts = {
 // ============================================================
 // 🧠 Esperar Correr Calendario (F4) — Fecha Menor o Mayor
 // ============================================================
+// ============================================================
+// 🧠 Esperar Correr Calendario (F4) — robusta (fecha menor o mayor)
+// ============================================================
 async function esperarCorrerCalendarioF4(page, baseDatos, connectString, runId = "GLOBAL") {
   const { monitorearF4Job } = require("./oracleUtils.js");
   let intentos = 0;
   let estadoNow = "";
-  const MAX_INTENTOS = 40; // ~160 segundos
+  const inicio = Date.now();
+  const MAX_INTENTOS = 45; // 3 minutos
 
   while (intentos < MAX_INTENTOS) {
     await page.waitForTimeout(4000);
@@ -193,8 +197,8 @@ async function esperarCorrerCalendarioF4(page, baseDatos, connectString, runId =
       const fila = await page.locator(`#myTable tbody tr:has-text("Correr Calendario")`).first();
       const badgeTxt = await fila.locator("td .badge").textContent();
       estadoNow = (badgeTxt || "").trim().toUpperCase();
-    } catch {
-      logConsole(`⚠️ DOM recargado durante monitoreo "Correr Calendario"`, runId);
+    } catch (err) {
+      logConsole(`⚠️ DOM recargado durante monitoreo "Correr Calendario": ${err.message}`, runId);
       const base = page.url().split("/ProcesoCierre")[0];
       await navegarConRetries(page, `${base}/ProcesoCierre/Procesar`);
       await page.waitForSelector("#myTable tbody tr", { timeout: 15000 });
@@ -206,29 +210,29 @@ async function esperarCorrerCalendarioF4(page, baseDatos, connectString, runId =
       return estadoNow;
     }
 
-    // 🔸 Si después de 2.5 minutos sigue en PENDIENTE → validar Oracle
-    if (estadoNow === "PENDIENTE" && intentos === MAX_INTENTOS - 1) {
-      logConsole(`⏱️ Correr Calendario sigue en PENDIENTE >2.5min → validando Oracle.`, runId);
+    const minutos = (Date.now() - inicio) / 60000;
+    if (minutos > 3) {
+      logConsole(`⏱️ Tiempo máximo (${minutos.toFixed(2)} min) — forzando cierre lógico.`, runId);
       try {
         const jobActivo = await monitorearF4Job(connectString, baseDatos, null, runId);
         if (!jobActivo) {
-          logConsole(`✅ Oracle confirma sin job activo → se asume "Completado" lógico.`, runId);
-          return "COMPLETADO";
+          logConsole(`✅ Oracle sin job activo → se asume "COMPLETADO" lógico.`, runId);
         } else {
-          logConsole(`⚙️ Oracle aún reporta job activo — se corta monitoreo sin bloquear flujo.`, runId);
-          return "COMPLETADO";
+          logConsole(`⚙️ Oracle aún reporta job activo → se corta monitoreo sin bloqueo.`, runId);
         }
       } catch (err) {
-        logConsole(`⚠️ Error validando Oracle (${err.message}) → se asume "Completado".`, runId);
-        return "COMPLETADO";
+        logConsole(`⚠️ No se pudo validar Oracle (${err.message}) → se asume COMPLETADO.`, runId);
       }
+      return "COMPLETADO";
     }
+
     intentos++;
   }
 
-  logConsole(`🏁 [F4] Monitoreo Correr Calendario terminó sin cambio visible — se asume completado.`, runId);
+  logConsole(`🏁 [F4] Monitoreo Correr Calendario terminó sin cambio visible — asumido COMPLETADO.`, runId);
   return "COMPLETADO";
 }
+
 
 
 
