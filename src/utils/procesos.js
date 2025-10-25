@@ -350,6 +350,13 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
           continue;
         }
 
+        // 🧩 Excepción: "Correr Calendario (F4)" — usar monitoreo especial
+        if (descripcion.toUpperCase().includes("CORRER CALENDARIO")) {
+          logConsole(`🧩 [F4 Fecha Mayor] "Correr Calendario" detectado dentro del SQL → usando monitoreo especial.`, runId);
+          await esperarCorrerCalendarioF4(page, baseDatos, connectString, runId);
+          continue;
+        }
+
         const link = await fila.$("a[href*='CodProceso']");
         const href = (await link?.getAttribute("href")) || "";
         const codSistema = href.match(/CodSistema=([^&]+)/i)?.[1] || "F4";
@@ -452,6 +459,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
 
   return "F4_COMPLETADO_MAYOR";
 }
+
 
 
 function guardarFechaF4Persistente(descripcion, fecha) {
