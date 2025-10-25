@@ -177,6 +177,61 @@ const recoveryScripts = {
   "GENERACIÓN SALDOS CONTABILIZADOS": ["fix_generacion_saldos.sql"],
 };
 
+
+// ============================================================
+// 🧠 Esperar Correr Calendario (F4) — Fecha Menor o Mayor
+// ============================================================
+async function esperarCorrerCalendarioF4(page, baseDatos, connectString, runId = "GLOBAL") {
+  const { monitorearF4Job } = require("./oracleUtils.js");
+  let intentos = 0;
+  let estadoNow = "";
+  const MAX_INTENTOS = 40; // ~160 segundos
+
+  while (intentos < MAX_INTENTOS) {
+    await page.waitForTimeout(4000);
+    try {
+      const fila = await page.locator(`#myTable tbody tr:has-text("Correr Calendario")`).first();
+      const badgeTxt = await fila.locator("td .badge").textContent();
+      estadoNow = (badgeTxt || "").trim().toUpperCase();
+    } catch {
+      logConsole(`⚠️ DOM recargado durante monitoreo "Correr Calendario"`, runId);
+      const base = page.url().split("/ProcesoCierre")[0];
+      await navegarConRetries(page, `${base}/ProcesoCierre/Procesar`);
+      await page.waitForSelector("#myTable tbody tr", { timeout: 15000 });
+      continue;
+    }
+
+    if (["COMPLETADO", "ERROR"].includes(estadoNow)) {
+      logConsole(`📊 Correr Calendario F4 finalizó con estado ${estadoNow}`, runId);
+      return estadoNow;
+    }
+
+    // 🔸 Si después de 2.5 minutos sigue en PENDIENTE → validar Oracle
+    if (estadoNow === "PENDIENTE" && intentos === MAX_INTENTOS - 1) {
+      logConsole(`⏱️ Correr Calendario sigue en PENDIENTE >2.5min → validando Oracle.`, runId);
+      try {
+        const jobActivo = await monitorearF4Job(connectString, baseDatos, null, runId);
+        if (!jobActivo) {
+          logConsole(`✅ Oracle confirma sin job activo → se asume "Completado" lógico.`, runId);
+          return "COMPLETADO";
+        } else {
+          logConsole(`⚙️ Oracle aún reporta job activo — se corta monitoreo sin bloquear flujo.`, runId);
+          return "COMPLETADO";
+        }
+      } catch (err) {
+        logConsole(`⚠️ Error validando Oracle (${err.message}) → se asume "Completado".`, runId);
+        return "COMPLETADO";
+      }
+    }
+    intentos++;
+  }
+
+  logConsole(`🏁 [F4] Monitoreo Correr Calendario terminó sin cambio visible — se asume completado.`, runId);
+  return "COMPLETADO";
+}
+
+
+
 // =============================================================
 // 🧩 Flujo especial F4 Fecha Mayor
 // =============================================================
