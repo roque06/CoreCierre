@@ -528,6 +528,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       // ============================================================
       // 🧩 🔸 CASO ESPECIAL: "CORRER CALENDARIO"
       // ============================================================
+      // ============================================================
+      // 🧩 🔸 CASO ESPECIAL: "CORRER CALENDARIO"
+      // ============================================================
       const descUpper = descripcion.toUpperCase();
       if (descUpper.includes("CORRER CALENDARIO")) {
         if (sistema === "F4") {
@@ -540,15 +543,18 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
               logConsole(`🖱 Click seguro ejecutado en "Correr Calendario (F4)"`, runId);
             }
 
-            // 🕒 Monitoreo robusto con recuperación DOM
+            // 🕒 Monitoreo tolerante (no se queda pegado)
             let intentos = 0;
             let estadoNow = "";
-            while (intentos < 40) {
+            const MAX_INTENTOS = 35; // ~2.3 minutos (4s x 35)
+
+            while (intentos < MAX_INTENTOS) {
               await page.waitForTimeout(4000);
               try {
                 const badgeTxt = await fila.locator("td .badge").textContent();
                 estadoNow = (badgeTxt || "").trim().toUpperCase();
               } catch (domErr) {
+                // DOM recargado — reubicar fila
                 logConsole(`⚠️ DOM recargado durante Correr Calendario: ${domErr.message}`, runId);
                 await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
                 await page.waitForSelector("#myTable tbody tr", { timeout: 15000 });
@@ -562,15 +568,29 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
                 break;
               }
 
-              if (estadoNow === "PENDIENTE" && intentos > 30) {
-                logConsole(`⏱️ Correr Calendario sigue en PENDIENTE >2min → se asume completado.`, runId);
+              if (estadoNow === "PENDIENTE" && intentos === MAX_INTENTOS - 1) {
+                logConsole(`⏱️ Correr Calendario lleva más de 2min en PENDIENTE — se fuerza cierre controlado.`, runId);
+                // 🧠 Validar Oracle una sola vez antes de asumir completado
+                try {
+                  const { monitorearF4Job } = require("./oracleUtils.js");
+                  const jobActivo = await monitorearF4Job(connectString, baseDatos, null, runId);
+                  if (!jobActivo) {
+                    logConsole(`✅ Oracle sin job activo → Correr Calendario asumido COMPLETADO.`, runId);
+                    estadoNow = "COMPLETADO";
+                  } else {
+                    logConsole(`⚙️ Oracle aún reporta job activo → continúa flujo igual.`, runId);
+                  }
+                } catch (err) {
+                  logConsole(`⚠️ No se pudo validar vía Oracle (${err.message}) → se asume COMPLETADO.`, runId);
+                  estadoNow = "COMPLETADO";
+                }
                 break;
               }
 
               intentos++;
             }
 
-            logConsole(`✅ [F4] Correr Calendario controlado — evitando bloqueo.`, runId);
+            logConsole(`🏁 [F4] Correr Calendario finalizado controladamente (estado: ${estadoNow || "DESCONOCIDO"}).`, runId);
           } catch (err) {
             logConsole(`⚠️ Error controlado en Correr Calendario F4: ${err.message}`, runId);
           }
@@ -585,6 +605,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           continue;
         }
       }
+
 
       // ============================================================
       // 🧩 Caso especial F4 (FECHA MAYOR)
