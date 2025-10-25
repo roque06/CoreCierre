@@ -575,7 +575,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       await completarEjecucionManual(page, runId);
 
       // 🔁 Esperar cambio de estado en la tabla
-      const estadoFinal = await esperarCompletado(page, descripcion, runId);
+      const estadoFinal = await esperarCompletado(page, descripcion, runId, sistema);
       logConsole(`📊 ${descripcion}: estado final = ${estadoFinal}`, runId);
 
       // ============================================================
