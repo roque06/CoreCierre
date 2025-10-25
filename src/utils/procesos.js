@@ -178,51 +178,73 @@ const recoveryScripts = {
 };
 
 
-// ============================================================
-// 🧠 Esperar Correr Calendario (F4) — Fecha Menor o Mayor
-// ============================================================
-// ============================================================
-// 🧠 Esperar Correr Calendario (F4) — robusta (fecha menor o mayor)
-// ============================================================
 async function esperarCorrerCalendarioF4(page, baseDatos, connectString, runId = "GLOBAL") {
   const { monitorearF4Job } = require("./oracleUtils.js");
   let intentos = 0;
   const MAX_INTENTOS = 40; // 160 segundos (~2.5min)
+  const intervalo = 4000;
+
+  logConsole("🕓 Iniciando monitoreo específico de 'Correr Calendario (F4)'", runId);
 
   while (intentos < MAX_INTENTOS) {
-    await page.waitForTimeout(4000);
+    await page.waitForTimeout(intervalo);
     let estadoNow = "";
 
     try {
-      const fila = await page.locator(`#myTable tbody tr:has-text("Correr Calendario")`).first();
-      const badgeTxt = await fila.locator("td .badge").textContent();
-      estadoNow = (badgeTxt || "").trim().toUpperCase();
-    } catch {
-      logConsole(`⚠️ DOM recargado durante monitoreo "Correr Calendario"`, runId);
+      // 🔍 Buscar solo la fila del sistema F4 que contenga "Correr Calendario"
+      const filas = await page.$$("#myTable tbody tr");
+      let filaCalendario = null;
+
+      for (const fila of filas) {
+        const sistema = (await fila.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase())) || "";
+        const descripcion = (await fila.$eval("td:nth-child(5)", el => el.innerText.trim().toUpperCase())) || "";
+        if (sistema === "F4" && descripcion.includes("CORRER CALENDARIO")) {
+          filaCalendario = fila;
+          break;
+        }
+      }
+
+      if (!filaCalendario) {
+        logConsole(`⚠️ No se encontró fila F4 'Correr Calendario' en intento ${intentos + 1}`, runId);
+        const base = page.url().split("/ProcesoCierre")[0];
+        await navegarConRetries(page, `${base}/ProcesoCierre/Procesar`);
+        await page.waitForSelector("#myTable tbody tr", { timeout: 15000 });
+        continue;
+      }
+
+      // 🧠 Leer badge del estado actual
+      const badgeTxt = await filaCalendario.$eval("td .badge", el => el.innerText.trim().toUpperCase());
+      estadoNow = badgeTxt || "PENDIENTE";
+      logConsole(`📊 Estado actual de 'Correr Calendario (F4)': ${estadoNow}`, runId);
+
+    } catch (err) {
+      logConsole(`⚠️ DOM recargado o error leyendo fila: ${err.message}`, runId);
       const base = page.url().split("/ProcesoCierre")[0];
       await navegarConRetries(page, `${base}/ProcesoCierre/Procesar`);
       await page.waitForSelector("#myTable tbody tr", { timeout: 15000 });
       continue;
     }
 
+    // ✅ Detectar estado final
     if (["COMPLETADO", "ERROR"].includes(estadoNow)) {
-      logConsole(`📊 Correr Calendario F4 finalizó con estado ${estadoNow}`, runId);
+      logConsole(`✅ 'Correr Calendario (F4)' finalizó con estado ${estadoNow}`, runId);
       return estadoNow;
     }
 
+    // ⏱️ Si se queda en pendiente mucho tiempo → validar Oracle
     if (estadoNow === "PENDIENTE" && intentos === MAX_INTENTOS - 1) {
-      logConsole(`⏱️ Correr Calendario sigue PENDIENTE (>2.5min) → validando Oracle.`, runId);
+      logConsole(`⏱️ 'Correr Calendario (F4)' sigue PENDIENTE → validando Oracle.`, runId);
       try {
         const jobActivo = await monitorearF4Job(connectString, baseDatos, null, runId);
         if (!jobActivo) {
-          logConsole(`✅ Oracle confirma sin job activo — se asume completado.`, runId);
+          logConsole(`✅ Oracle confirma sin job activo → se asume COMPLETADO.`, runId);
           return "COMPLETADO";
         } else {
-          logConsole(`⚙️ Oracle aún reporta job activo — se corta monitoreo sin bloqueo.`, runId);
+          logConsole(`⚙️ Oracle aún reporta job activo → se corta monitoreo sin bloqueo.`, runId);
           return "FORZADO_OK";
         }
       } catch (err) {
-        logConsole(`⚠️ Error validando Oracle (${err.message}) → se asume completado.`, runId);
+        logConsole(`⚠️ Error validando Oracle (${err.message}) → se asume COMPLETADO.`, runId);
         return "COMPLETADO";
       }
     }
@@ -230,9 +252,10 @@ async function esperarCorrerCalendarioF4(page, baseDatos, connectString, runId =
     intentos++;
   }
 
-  logConsole(`🏁 Monitoreo de Correr Calendario terminó sin cambio visible → se asume completado.`, runId);
+  logConsole(`🏁 'Correr Calendario (F4)' terminó sin cambio visible → se asume COMPLETADO.`, runId);
   return "COMPLETADO";
 }
+
 
 
 
