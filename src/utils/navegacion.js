@@ -23,97 +23,34 @@ async function navegarConRetries(page, url, maxRetries = 3) {
 /**
  * ⏳ Espera hasta que el proceso cambie a Completado o Error.
  */
-async function esperarCompletado(page, descripcion, runId = "GLOBAL", sistema = "F4", connectString = "", baseDatos = "") {
+async function esperarCompletado(page, descripcion, runId = "GLOBAL") {
+  const filaSelector = `tbody tr:has-text("${descripcion}")`;
   let estado = "";
-  const esperaEntreIntentos = 60000; // 1 minuto entre revisiones
-  let intentosFallidosDOM = 0;
-
-  const normalizar = (txt) =>
-    (txt || "")
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .toUpperCase();
 
   while (true) {
     try {
-      // 🔄 Recargar tabla solo si el sistema no es F4 (para no interferir con jobs sensibles)
-      if (sistema !== "F4") {
-        await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
-      }
+      // 🔄 Refrescar la tabla en cada ciclo para obtener el estado real del backend
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
+      await page.waitForSelector("#myTable tbody tr", { timeout: 15000 });
 
-      await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
-      const filas = await page.$$("#myTable tbody tr");
-      let filaEncontrada = null;
+      const fila = page.locator(filaSelector);
+      const estadoCell = fila.locator("td").nth(9);
+      estado = ((await estadoCell.textContent()) || "").trim();
 
-      for (const fila of filas) {
-        try {
-          const codSistema = await fila.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase());
-          const desc = await fila.$eval("td:nth-child(5)", el => el.innerText.trim().toUpperCase());
-
-          if (sistema === "F4") {
-            if (codSistema === "F4" && normalizar(desc) === normalizar(descripcion)) {
-              filaEncontrada = fila;
-              break;
-            }
-          } else if (normalizar(desc).includes(normalizar(descripcion))) {
-            filaEncontrada = fila;
-            break;
-          }
-        } catch { }
-      }
-
-      if (!filaEncontrada) {
-        intentosFallidosDOM++;
-        if (intentosFallidosDOM > 10) {
-          logConsole(`⚠️ No se encontró la fila para "${descripcion}" (${sistema}) tras varios intentos — se abandona espera.`, runId);
-          return "IGNORADO";
-        }
-        await page.waitForTimeout(esperaEntreIntentos);
-        continue;
-      }
-
-      intentosFallidosDOM = 0;
-
-      // 📖 Leer el estado actual del proceso
-      let estadoCelda = "";
-      try {
-        estadoCelda = await filaEncontrada.$eval("td:nth-child(10)", el => el.innerText.trim().toUpperCase());
-      } catch {
-        await page.waitForTimeout(esperaEntreIntentos);
-        continue;
-      }
-
-      estado = estadoCelda || "N/A";
-
-      // ✅ Interpretar formato de fecha/hora como COMPLETADO
-      if (/^\d{1,2}\/\d{1,2}\/\d{4}\.\d{1,2}:\d{2}(AM|PM)$/i.test(estado)) {
-        logConsole(`📅 "${descripcion}" finalizó correctamente (timestamp detectado).`, runId);
-        return "COMPLETADO";
-      }
-
-      // 🏁 Estados finales
-      if (["COMPLETADO", "ERROR"].includes(estado)) {
-        logConsole(`📌 "${descripcion}" (${sistema}) finalizó con estado: ${estado}`, runId);
+      if (["Completado", "Error"].includes(estado)) {
+        logConsole(`📌 Estado final de "${descripcion}": ${estado}`, runId);
         return estado;
       }
 
-      // 🔄 Si sigue en proceso, esperar sin mostrar spam
-      await page.waitForTimeout(esperaEntreIntentos);
+      logConsole(`⏳ "${descripcion}" sigue en estado: ${estado || "N/A"} → esperando...`, runId);
     } catch (err) {
-      if (err.message?.includes("ERR_ABORTED") || err.message?.includes("Execution context")) {
-        logConsole(`⚠️ Error de DOM o recarga en "${descripcion}" — reintentando...`, runId);
-        await page.waitForTimeout(10000);
-        continue;
-      }
-
       logConsole(`⚠️ Error leyendo estado de "${descripcion}": ${err.message}`, runId);
-      await page.waitForTimeout(esperaEntreIntentos);
     }
+
+    // 🕒 Esperar 30 segundos antes de volver a intentar
+    await page.waitForTimeout(30000);
   }
 }
-
 
 
 /**
