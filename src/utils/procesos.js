@@ -592,74 +592,52 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       // ============================================================
       // 🧩 🔸 CASO ESPECIAL: "CORRER CALENDARIO (F4)"
       // ============================================================
-      if (descUpper.includes("CORRER CALENDARIO")) {
-        if (sistema === "F4") {
-          logConsole(`🧩 [Excepción Correr Calendario] — F4 permitido`, runId);
-          try {
-            const boton = fila.locator('a:has-text("Procesar Directo"), a:has-text("Procesar")');
+      // ============================================================
+      // 🧩 🔸 CASO ESPECIAL: "CORRER CALENDARIO (F4)"
+      // ============================================================
+      if (descripcion.toUpperCase().includes("CORRER CALENDARIO") && sistema === "F4") {
+        logConsole(`🧩 [Excepción Correr Calendario F4] — manejando ejecución combinada`, runId);
+
+        try {
+          let estadoNow = "";
+
+          // 🔹 Si el proceso tiene fecha mayor → modo SQL (sin clic)
+          const tieneMayor = await esF4FechaMayor(descripcion, fechaTxt, filas, runId);
+          if (tieneMayor) {
+            logConsole(`📆 [F4 Fecha Mayor] Ejecutando Correr Calendario vía SQL`, runId);
+            const resultadoF4 = await ejecutarF4FechaMayor(page, baseDatos, connectString, runId);
+            if (resultadoF4 === "F4_COMPLETADO_MAYOR") {
+              estadoNow = await esperarCorrerCalendarioF4(page, baseDatos, connectString, runId);
+            }
+          } else {
+            // 🔹 Si la fecha es menor → hace clic normal
+            const filaLoc = page.locator(`#myTable tbody tr:has-text("${descripcion}")`);
+            let boton = filaLoc.locator('a[href*="ProcesarDirecto"]:has-text("Procesar Directo")');
+            if ((await boton.count()) === 0)
+              boton = filaLoc.locator('a:has-text("Procesar"), button:has-text("Procesar")');
+
             if (await boton.count()) {
-              await boton.scrollIntoViewIfNeeded();
-              await boton.click({ force: true }).catch(() => { });
-              logConsole(`🖱 Click seguro ejecutado en "Correr Calendario (F4)"`, runId);
+              await boton.first().scrollIntoViewIfNeeded();
+              await boton.first().click({ force: true });
+              logConsole(`🖱 Click ejecutado en "Correr Calendario (F4)"`, runId);
             }
-
-            // Monitoreo tolerante
-            let intentos = 0;
-            let estadoNow = "";
-            const MAX_INTENTOS = 35;
-            while (intentos < MAX_INTENTOS) {
-              await page.waitForTimeout(4000);
-              try {
-                const badgeTxt = await fila.locator("td .badge").textContent();
-                estadoNow = (badgeTxt || "").trim().toUpperCase();
-              } catch (domErr) {
-                logConsole(`⚠️ DOM recargado durante Correr Calendario: ${domErr.message}`, runId);
-                await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
-                await page.waitForSelector("#myTable tbody tr", { timeout: 15000 });
-                const nuevaFila = await page.locator(`#myTable tbody tr:has-text("Correr Calendario")`).first();
-                if (await nuevaFila.count()) fila = nuevaFila;
-                continue;
-              }
-
-              if (["COMPLETADO", "ERROR"].includes(estadoNow)) {
-                logConsole(`📊 Correr Calendario F4 finalizó con estado ${estadoNow}`, runId);
-                break;
-              }
-
-              if (estadoNow === "PENDIENTE" && intentos === MAX_INTENTOS - 1) {
-                logConsole(`⏱️ Correr Calendario lleva más de 2min en PENDIENTE — se asume completado.`, runId);
-                try {
-                  const { monitorearF4Job } = require("./oracleUtils.js");
-                  const jobActivo = await monitorearF4Job(connectString, baseDatos, null, runId);
-                  if (!jobActivo) {
-                    logConsole(`✅ Oracle sin job activo → Correr Calendario asumido COMPLETADO.`, runId);
-                    estadoNow = "COMPLETADO";
-                  }
-                } catch {
-                  logConsole(`⚠️ No se pudo validar vía Oracle → se asume COMPLETADO.`, runId);
-                  estadoNow = "COMPLETADO";
-                }
-                break;
-              }
-
-              intentos++;
-            }
-
-            logConsole(`🏁 [F4] Correr Calendario finalizado controladamente (estado: ${estadoNow || "DESCONOCIDO"}).`, runId);
-          } catch (err) {
-            logConsole(`⚠️ Error controlado en Correr Calendario F4: ${err.message}`, runId);
+            estadoNow = await esperarCorrerCalendarioF4(page, baseDatos, connectString, runId);
           }
 
-          // Refrescar y continuar
+          // ✅ Marcar completado lógico y refrescar
+          procesosEjecutadosGlobal.set(descripcion.toUpperCase(), true);
+          logConsole(`🏁 [F4] "Correr Calendario" completado (${estadoNow}) — flujo continúa.`, runId);
+
           await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
           await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
           filas = await page.$$("#myTable tbody tr");
           continue;
-        } else {
-          logConsole(`⏭️ [Excepción Correr Calendario] — ${sistema} ignorado (no ejecutado)`, runId);
+        } catch (err) {
+          logConsole(`⚠️ Error controlado en "Correr Calendario (F4)": ${err.message}`, runId);
           continue;
         }
       }
+
 
       // ============================================================
       // 🧩 Caso especial F4 (FECHA MAYOR)
