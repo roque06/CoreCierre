@@ -538,7 +538,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
             const boton = fila.locator('a:has-text("Procesar Directo"), a:has-text("Procesar")');
             if (await boton.count()) {
               await boton.scrollIntoViewIfNeeded();
-              await boton.click({ force: true }).catch(() => {});
+              await boton.click({ force: true }).catch(() => { });
               logConsole(`🖱 Click seguro ejecutado en "Correr Calendario (F4)"`, runId);
 
               // Espera cambio de estado tolerante a DOM reload
