@@ -249,14 +249,19 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
     logConsole("⏸️ F4FechaMayor ya en ejecución — esperando a que termine.", runId);
     return;
   }
+
   f4EnEjecucion = true;
+  global.__f4ModoEspecialActivo = true; // 🟢 activa el modo especial
 
   try {
     logConsole("🔄 [Modo F4 Fecha Mayor] ejecución controlada por SQL sin clics.", runId);
 
+    // ============================================================
     // 1️⃣ Detectar fechas válidas
+    // ============================================================
     const filas = await page.$$("#myTable tbody tr");
     const fechasF4 = [];
+
     for (const fila of filas) {
       try {
         const sistema = (await fila.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase())) || "";
@@ -286,9 +291,12 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
       return "F4_TODAS_IGUALES";
     }
 
-    // 2️⃣ Ejecutar scriptCursol una sola vez
+    // ============================================================
+    // 2️⃣ Ejecutar scriptCursol solo una vez
+    // ============================================================
     const mesesOracle = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
     const fechaOracle = `${String(fechaMayor.getUTCDate()).padStart(2, "0")}-${mesesOracle[fechaMayor.getUTCMonth()]}-${fechaMayor.getUTCFullYear()}`;
+
     if (!procesosActualizados.has("SCRIPT_F4")) {
       try {
         const original = path.join(__dirname, "../../sql/scriptCursol.sql");
@@ -296,11 +304,13 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         let contenido = fs.readFileSync(original, "utf-8");
         contenido = contenido.replace(/fecha\s*=\s*'[^']+'/i, `fecha = '${fechaOracle}'`);
         fs.writeFileSync(temporal, contenido, "utf-8");
+
         await fetch("http://127.0.0.1:4000/api/run-script", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ baseDatos, script: "scriptCursol_tmp.sql", connectString }),
         });
+
         fs.unlinkSync(temporal);
         logConsole(`✅ scriptCursol_tmp.sql ejecutado con fecha ${fechaOracle}`, runId);
         procesosActualizados.add("SCRIPT_F4");
@@ -309,8 +319,11 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
       }
     }
 
+    // ============================================================
     // 3️⃣ Procesar procesos F4 (fecha menor)
+    // ============================================================
     const filasActuales = await page.$$("#myTable tbody tr");
+
     for (const fila of filasActuales) {
       try {
         const sistema = (await fila.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase())) || "";
@@ -320,6 +333,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         const estado = ((await fila.$eval("td:nth-child(10)", el => el.innerText.trim())) || "").toUpperCase();
         const fechaTxt = (await fila.$eval("td:nth-child(7)", el => el.innerText.trim())) || "";
         const fechaObj = new Date(fechaTxt.split("/").reverse().join("-"));
+
         if (estado === "COMPLETADO" || fechaObj.getTime() >= fechaMayor.getTime()) {
           logConsole(`⏭️ ${descripcion} ya completado o con fecha igual/mayor — omitido.`, runId);
           continue;
@@ -330,23 +344,26 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         const codSistema = href.match(/CodSistema=([^&]+)/i)?.[1] || "F4";
         const codProceso = href.match(/CodProceso=([^&]+)/i)?.[1] || "0";
         const claveProc = `${codSistema}-${codProceso}`;
-        if (procesosActualizados.has(claveProc)) continue;
 
+        // ============================================================
         // 🧩 Caso especial: Correr Calendario
+        // ============================================================
         if (descripcion.toUpperCase().includes("CORRER CALENDARIO")) {
           logConsole(`🧩 [F4 Fecha Mayor] Correr Calendario detectado → forzando estado 'P' y monitoreo especial.`, runId);
-          try {
-            const updateSQL = `
-              UPDATE PA.PA_BITACORA_PROCESO_CIERRE
-                 SET ESTATUS='P', FECHA_INICIO=SYSDATE
-               WHERE COD_SISTEMA='${codSistema}'
-                 AND COD_PROCESO=${codProceso}
-                 AND TRUNC(FECHA) = (
-                   SELECT TRUNC(MAX(x.FECHA))
-                     FROM PA.PA_BITACORA_PROCESO_CIERRE x
-                    WHERE x.COD_SISTEMA='${codSistema}'
-                      AND x.COD_PROCESO=${codProceso}
-                 )`;
+
+          const updateSQL = `
+            UPDATE PA.PA_BITACORA_PROCESO_CIERRE
+               SET ESTATUS='P', FECHA_INICIO=SYSDATE
+             WHERE COD_SISTEMA='${codSistema}'
+               AND COD_PROCESO=${codProceso}
+               AND TRUNC(FECHA) = (
+                 SELECT TRUNC(MAX(x.FECHA))
+                   FROM PA.PA_BITACORA_PROCESO_CIERRE x
+                  WHERE x.COD_SISTEMA='${codSistema}'
+                    AND x.COD_PROCESO=${codProceso}
+               )`;
+
+          if (!procesosActualizados.has(claveProc)) {
             await fetch("http://127.0.0.1:4000/api/run-script", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -354,17 +371,22 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
             });
             logConsole(`✅ Correr Calendario marcado 'P' (${claveProc})`, runId);
             procesosActualizados.add(claveProc);
-
-            // ✅ Esperar el monitoreo, pero continuar con el siguiente proceso F4
-            await esperarCorrerCalendarioF4(page, baseDatos, connectString, runId);
-            logConsole(`🏁 Correr Calendario completado (fecha mayor) — continuando con los demás F4...`, runId);
-          } catch (err) {
-            logConsole(`⚠️ Error en Correr Calendario (F4 Fecha Mayor): ${err.message}`, runId);
+          } else {
+            logConsole(`ℹ️ Correr Calendario (${claveProc}) ya fue marcado previamente — no se repite.`, runId);
           }
-          // ❌ Ya no hacemos "continue" — sigue con los siguientes procesos F4
+
+          const estadoFinal = await esperarCorrerCalendarioF4(page, baseDatos, connectString, runId);
+          if (estadoFinal !== "COMPLETADO") {
+            logConsole(`⚠️ [F4 Fecha Mayor] Correr Calendario terminó con estado '${estadoFinal}' → continuando flujo sin bloqueo.`, runId);
+          }
+
+          logConsole(`🏁 Correr Calendario completado (fecha mayor) — continuando con los demás F4...`, runId);
+          // ⚠️ No hacemos "continue" — sigue el bucle normalmente
         }
 
-        // 🔸 Procesos normales
+        // ============================================================
+        // 🔸 Procesos F4 normales
+        // ============================================================
         const updateSQL = `
           UPDATE PA.PA_BITACORA_PROCESO_CIERRE
              SET ESTATUS='P', FECHA_INICIO=SYSDATE
@@ -396,6 +418,9 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
       }
     }
 
+    // ============================================================
+    // 🏁 Fin del modo F4 Fecha Mayor
+    // ============================================================
     logConsole("✅ Todos los procesos F4 con fecha mayor completados.", runId);
     const baseUrl = page.url().split("/ProcesoCierre")[0] || "https://default.url";
     await navegarConRetries(page, `${baseUrl}/ProcesoCierre/Procesar`);
@@ -405,6 +430,8 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
     logConsole(`❌ Error general en F4FechaMayor: ${err.message}`, runId);
   } finally {
     f4EnEjecucion = false;
+    global.__f4ModoEspecialActivo = false; // 🔻 modo especial desactivado
+    logConsole("🚀 [F4 Fecha Mayor] Todos los procesos completados — devolviendo control al flujo normal.", runId);
   }
 
   return "F4_COMPLETADO_MAYOR";
