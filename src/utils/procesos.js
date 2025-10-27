@@ -454,7 +454,9 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
             const sqlFinal = `
               UPDATE PA.PA_BITACORA_PROCESO_CIERRE
                  SET ESTATUS='T'
-               WHERE COD_SISTEMA='F4'`;
+               WHERE COD_SISTEMA='F4'
+               AND COD_PROCESO <> 17`
+               ;
 
             await fetch("http://127.0.0.1:4000/api/run-script", {
               method: "POST",
