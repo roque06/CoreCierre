@@ -645,14 +645,15 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           const tieneMayor = await esF4FechaMayor(descripcion, fechaTxt, filas, runId);
 
           if (tieneMayor) {
+            // 🟢 Fecha mayor → ejecutar por SQL (sin clic)
             logConsole(`📆 [F4 Fecha Mayor] Ejecutando Correr Calendario vía SQL`, runId);
             const resultadoF4 = await ejecutarF4FechaMayor(page, baseDatos, connectString, runId);
             if (resultadoF4 === "F4_COMPLETADO_MAYOR") {
               estadoNow = await esperarCorrerCalendarioF4(page, baseDatos, connectString, runId);
             }
           } else {
-            // 🟠 Sin fecha mayor → clic normal
-            logConsole(`🖱️ [F4] Correr Calendario sin fecha mayor → clic forzado`, runId);
+            // 🟠 Sin fecha mayor → clic normal en Procesar Directo
+            logConsole(`🖱️ [F4] Correr Calendario sin fecha mayor → ejecutando clic normal.`, runId);
 
             const filaLoc = page.locator(`#myTable tbody tr:has-text("${descripcion}")`);
             let boton = filaLoc.locator('a[href*="ProcesarDirecto"]:has-text("Procesar Directo")');
@@ -698,6 +699,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
             estadoNow = estadoFinal;
           }
 
+          // Guardar y continuar
           procesosEjecutadosGlobal.set(claveProc, true);
           logConsole(`🏁 [F4] "Correr Calendario" completado (${estadoNow}) — flujo continúa.`, runId);
 
@@ -756,31 +758,23 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       const estadoFinal = await esperarCompletado(page, descripcion, runId);
       logConsole(`📊 ${descripcion}: estado final = ${estadoFinal}`, runId);
 
-      if (sistema === "F4" && estadoFinal === "Error") {
+      // ============================================================
+      // 🔍 Monitoreo Oracle si F4 con error
+      // ============================================================
+      if (sistema === "F4" && estadoFinal === "ERROR") {
         logConsole(`🔍 [F4] Error detectado → iniciando monitoreo Oracle...`, runId);
         try {
-          const filaTarget = await page.locator(`#myTable tbody tr:has-text("${descripcion}")`).first();
-          const enlace = filaTarget.locator('a[href*="ProcesarDirecto"], a:has-text("Procesar Directo")').first();
-          let href = await enlace.getAttribute("href");
-          if (href && !href.startsWith("http")) {
-            const base = page.url().split("/ProcesoCierre")[0];
-            href = `${base}${href.startsWith("/") ? "" : "/"}${href}`;
-          }
-          const codSistema = href.match(/CodSistema=([^&]+)/i)?.[1] || "F4";
-          const codProceso = href.match(/CodProceso=([^&]+)/i)?.[1] || "0";
           const { monitorearF4Job, runSqlInline } = require("./oracleUtils.js");
           await monitorearF4Job(connectString, baseDatos, async () => {
             const updateSQL = `
               UPDATE PA.PA_BITACORA_PROCESO_CIERRE
                  SET ESTATUS='T', FECHA_FIN = SYSDATE
-               WHERE COD_SISTEMA='${codSistema}'
-                 AND COD_PROCESO=${codProceso}
+               WHERE COD_SISTEMA='${sistema}'
                  AND TRUNC(FECHA) = (
                    SELECT TRUNC(MAX(x.FECHA))
                      FROM PA.PA_BITACORA_PROCESO_CIERRE x
-                    WHERE x.COD_SISTEMA='${codSistema}'
-                      AND x.COD_PROCESO=${codProceso}
-                 )`;
+                    WHERE x.COD_SISTEMA='${sistema}'
+               )`;
             await runSqlInline(updateSQL, connectString);
           }, runId);
         } catch (err) {
@@ -810,6 +804,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   return "Completado";
 }
+
 
 
 
