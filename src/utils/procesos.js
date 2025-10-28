@@ -768,96 +768,59 @@ async function ejecutarPorHref(page, fullUrl, descripcion, baseDatos, runId = "G
 
 
 
-// ============================================================
-// 🧩 Esperar Correr Calendario F4 — sincronizado con el front
-// ============================================================
-async function completarEjecucionManual(page, baseDatos, connectString, runId = "GLOBAL") {
-  const { monitorearF4Job } = require("./oracleUtils.js");
-  const intervalo = 4000;
-  const MAX_INTENTOS = 45; // ~3 minutos
+async function completarEjecucionManual(page, runId = "GLOBAL") {
+  try {
+    logConsole("⚙️ Iniciando completarEjecucionManual...", runId);
 
-  logConsole("🕓 Iniciando monitoreo específico de 'Correr Calendario (F4)'", runId);
-
-  for (let intento = 0; intento < MAX_INTENTOS; intento++) {
-    await page.waitForTimeout(intervalo);
-    let estadoNow = "";
-
-    try {
-      if (intento % 2 === 0) {
-        const base = page.url().split("/ProcesoCierre")[0];
-        await navegarConRetries(page, `${base}/ProcesoCierre/Procesar`);
-        await page.waitForSelector("#myTable tbody tr", { timeout: 15000 });
-      }
-
-      const filas = await page.$$("#myTable tbody tr");
-      let filaCalendario = null;
-
-      for (const fila of filas) {
-        const sistema = (await fila.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase())) || "";
-        const descripcion = (await fila.$eval("td:nth-child(5)", el => el.innerText.trim().toUpperCase())) || "";
-        if (sistema === "F4" && descripcion.includes("CORRER CALENDARIO")) {
-          filaCalendario = fila;
-          break;
-        }
-      }
-
-      if (!filaCalendario) {
-        logConsole(`⚠️ No se encontró fila F4 'Correr Calendario' (intento ${intento + 1})`, runId);
-        continue;
-      }
-
-      const badgeTxt = await filaCalendario.$eval("td .badge", el => el.innerText.trim().toUpperCase());
-      estadoNow = badgeTxt || "PENDIENTE";
-      logConsole(`📊 Estado actual de 'Correr Calendario (F4)': ${estadoNow}`, runId);
-
-      if (estadoNow === "PENDIENTE") {
-        if (intento < 5) {
-          logConsole(`⌛ Backend aún no refleja el inicio — esperando actualización...`, runId);
-          continue;
-        }
-      }
-
-      if (estadoNow.includes("EN PROCESO")) {
-        logConsole(`🔄 Correr Calendario detectado EN PROCESO — esperando finalización.`, runId);
-        return await esperarCompletado(page, "Correr Calendario", runId, "F4", connectString, baseDatos);
-      }
-
-      if (estadoNow.includes("COMPLETADO")) {
-        logConsole(`✅ 'Correr Calendario (F4)' finalizó con estado COMPLETADO`, runId);
-        return "COMPLETADO";
-      }
-
-      if (estadoNow.includes("ERROR")) {
-        logConsole(`❌ 'Correr Calendario (F4)' terminó con ERROR`, runId);
-        return "ERROR";
-      }
-
-      // 🔍 Validación final vía Oracle
-      if (intento === MAX_INTENTOS - 1) {
-        logConsole(`⏱️ Validando Oracle por estado prolongado 'Pendiente'...`, runId);
-        try {
-          const jobActivo = await monitorearF4Job(connectString, baseDatos, null, runId);
-          if (!jobActivo) {
-            logConsole(`✅ Oracle confirma sin job activo → marcando COMPLETADO`, runId);
-            return "COMPLETADO";
-          } else {
-            logConsole(`⚙️ Oracle aún reporta job activo — reiniciando monitoreo`, runId);
-            intento = 0;
-          }
-        } catch (err) {
-          logConsole(`⚠️ Error validando Oracle (${err.message}) → se asume COMPLETADO`, runId);
-          return "COMPLETADO";
-        }
-      }
-    } catch (err) {
-      logConsole(`⚠️ Error monitoreando fila F4 (${err.message})`, runId);
+    // 1️⃣ Click inicial en "Procesar Directo" si está visible
+    const btnProcesar = page.locator('button:has-text("Procesar Directo"), input[value="Procesar Directo"]');
+    if (await btnProcesar.first().isVisible().catch(() => false)) {
+      await btnProcesar.first().click({ force: true });
+      logConsole(`✅ Click en botón superior "Procesar Directo"`, runId);
+      await page.waitForTimeout(500);
     }
+
+    // 2️⃣ Buscar el botón “Iniciar” dentro del modal (o global)
+    const posiblesSelectores = [
+      '#myModal input[type="submit"][value="Iniciar"]',
+      '#myModalAdd input[type="submit"][value="Iniciar"]',
+      'input[type="submit"][value="Iniciar"]',
+      'button:has-text("Iniciar")',
+    ];
+
+    let btnIniciar = null;
+    for (const selector of posiblesSelectores) {
+      btnIniciar = await page.$(selector);
+      if (btnIniciar) {
+        logConsole(`🧩 Botón "Iniciar" detectado con selector: ${selector}`, runId);
+        break;
+      }
+    }
+
+    // 3️⃣ Click seguro en "Iniciar"
+    if (btnIniciar) {
+      try {
+        await btnIniciar.scrollIntoViewIfNeeded();
+        await btnIniciar.waitForElementState("visible", { timeout: 5000 });
+        await btnIniciar.click({ force: true });
+        logConsole(`✅ Click ejecutado en botón "Iniciar"`, runId);
+      } catch {
+        await page.evaluate(el => el.click(), btnIniciar);
+        logConsole(`✅ Click forzado en botón "Iniciar"`, runId);
+      }
+    } else {
+      logConsole(`⚠️ No se encontró botón "Iniciar" visible`, runId);
+    }
+
+    // 4️⃣ Esperar redirección natural (sin forzar)
+    await page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 120000 });
+    await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
+    logConsole(`✅ Tabla principal cargada nuevamente.`, runId);
+
+  } catch (err) {
+    logConsole(`⚠️ completarEjecucionManual (error): ${err.message}`, runId);
   }
-
-  logConsole(`🏁 'Correr Calendario (F4)' terminó sin cambio visible → se asume COMPLETADO.`, runId);
-  return "COMPLETADO";
 }
-
 
 
 
