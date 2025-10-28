@@ -556,6 +556,9 @@ async function completarEjecucionManual(page, runId = "GLOBAL") {
 // ============================================================
 // ▶️ Ejecutar proceso (versión ajustada con completarEjecucionManual)
 // ============================================================
+// ============================================================
+// ▶️ Ejecutar proceso (versión final adaptada con control de jobs y UPDATE preciso)
+// ============================================================
 async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = "GLOBAL") {
   await page.waitForSelector("#myTable tbody tr");
   logConsole(`▶️ Analizando sistema ${sistema}...`, runId);
@@ -640,7 +643,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           logConsole("✅ Click en botón azul 'Procesar Directo'.", runId);
         }
 
-        // 🔄 Reemplazo robusto → evita “Element is not visible”
+        // 🔄 Evita “Element is not visible” y clics dobles
         await completarEjecucionManual(page, runId);
 
       } catch (e) {
@@ -659,11 +662,11 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         }
       }
 
+      // =============================== ⚠️ Manejo de error con job ===============================
       if (estadoFinal === "ERROR") {
         logConsole(`❌ ${descripcion} finalizó con error.`, runId);
 
         try {
-          // 🔍 Detectar si existe job activo asociado
           const hayJob = typeof monitorearF4Job === "function"
             ? await monitorearF4Job(connectString, baseDatos, runId)
             : false;
@@ -679,23 +682,22 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
             // 🩹 Actualización precisa por COD_SISTEMA + COD_PROCESO
             // =====================================================
             try {
-              // Obtener codSistema y codProceso del href
               const link = await fila.$("a[href*='CodProceso']");
               const href = (await link?.getAttribute("href")) || "";
               const codSistema = href.match(/CodSistema=([^&]+)/i)?.[1] || sistema;
               const codProceso = href.match(/CodProceso=([^&]+)/i)?.[1] || "0";
 
               const sql = `
-          UPDATE PA.PA_BITACORA_PROCESO_CIERRE
-             SET ESTATUS='T', FECHA_FIN = SYSDATE
-           WHERE COD_SISTEMA='${codSistema}'
-             AND COD_PROCESO=${codProceso}
-             AND TRUNC(FECHA) = (
-               SELECT TRUNC(MAX(x.FECHA))
-                 FROM PA.PA_BITACORA_PROCESO_CIERRE x
-                WHERE x.COD_SISTEMA='${codSistema}'
-                  AND x.COD_PROCESO=${codProceso}
-             )`;
+                UPDATE PA.PA_BITACORA_PROCESO_CIERRE
+                   SET ESTATUS='T', FECHA_FIN = SYSDATE
+                 WHERE COD_SISTEMA='${codSistema}'
+                   AND COD_PROCESO=${codProceso}
+                   AND TRUNC(FECHA) = (
+                     SELECT TRUNC(MAX(x.FECHA))
+                       FROM PA.PA_BITACORA_PROCESO_CIERRE x
+                      WHERE x.COD_SISTEMA='${codSistema}'
+                        AND x.COD_PROCESO=${codProceso}
+                   )`;
 
               await fetch("http://127.0.0.1:4000/api/run-script", {
                 method: "POST",
@@ -729,9 +731,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         continue;
       }
 
-
-
-
+      // =============================== ✅ Completado normal ===============================
       if (estadoFinal === "COMPLETADO") {
         procesosEjecutadosGlobal.set(claveEjec, true);
         logConsole(`✅ ${descripcion} marcado COMPLETADO.`, runId);
@@ -745,7 +745,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
     } catch (err) {
       logConsole(`⚠️ Error inesperado: ${err.message}`, runId);
       await page.waitForTimeout(3000);
-      // 🔄 Refrescar contexto tras error
       await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
       await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
       filas = await page.$$("#myTable tbody tr");
