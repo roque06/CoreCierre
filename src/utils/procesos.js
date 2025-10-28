@@ -419,125 +419,6 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
   return "F4_COMPLETADO_MAYOR";
 }
 
-// ============================================================
-// ▶️ Ejecutar proceso general
-// ============================================================
-async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = "GLOBAL") {
-  await page.waitForSelector("#myTable tbody tr");
-  logConsole(`▶️ Analizando sistema ${sistema}...`, runId);
-
-  const procesosEjecutadosGlobal = global.procesosEjecutadosGlobal || new Map();
-  global.procesosEjecutadosGlobal = procesosEjecutadosGlobal;
-
-  const normalizar = (t) =>
-    (t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toUpperCase();
-
-  const parseFecha = (txt) => {
-    if (!txt) return null;
-    const clean = txt.replace(/[–\-\.]/g, "/").trim();
-    const [d, m, y] = clean.split("/").map(Number);
-    if (!d || !m || !y) return null;
-    const date = new Date(`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}T00:00:00`);
-    return isNaN(date.getTime()) ? null : date;
-  };
-
-  const buildClaveProceso = (sistema, descripcion, fechaTxt) =>
-    `${normalizar(sistema)}|${normalizar(descripcion)}|${(fechaTxt || "").trim()}`;
-
-  async function esF4FechaMayor(descripcionActual, fechaTxt, filasActuales) {
-    const descNorm = normalizar(descripcionActual);
-    const actual = parseFecha(fechaTxt);
-    if (!actual) return false;
-    const fechasF4 = [];
-    for (const f of filasActuales) {
-      try {
-        const sis = (await f.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase())) || "";
-        if (sis !== "F4") continue;
-        const fechaStr = (await f.$eval("td:nth-child(7)", el => el.innerText.trim())) || "";
-        const val = parseFecha(fechaStr);
-        if (val) fechasF4.push(val);
-      } catch { }
-    }
-    if (fechasF4.length === 0) return false;
-    const fechaMayorGlobal = fechasF4.reduce((a, b) => (a > b ? a : b));
-    return actual.getTime() === fechaMayorGlobal.getTime();
-  }
-
-  let filas = await page.$$("#myTable tbody tr");
-
-  for (let i = 0; i < filas.length; i++) {
-    try {
-      const fila = filas[i];
-      const sis = (await fila.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase())) || "";
-      if (sis !== sistema.toUpperCase()) continue;
-
-      const descripcion = (await fila.$eval("td:nth-child(5)", el => el.innerText.trim())) || "";
-      const fechaTxt = (await fila.$eval("td:nth-child(7)", el => el.innerText.trim())) || "";
-      const estado = ((await fila.$eval("td:nth-child(10)", el => el.innerText.trim())) || "").toUpperCase();
-
-      const claveEjec = buildClaveProceso(sistema, descripcion, fechaTxt);
-      if (!["PENDIENTE", "ERROR"].includes(estado)) continue;
-      if (procesosEjecutadosGlobal.has(claveEjec)) continue;
-
-      logConsole(`▶️ [${sistema}] ${descripcion} (${estado}) — Fecha=${fechaTxt}`, runId);
-
-      // 🧠 Modo F4 SQL
-      if (sistema.toUpperCase() === "F4") {
-        const tieneMayor = await esF4FechaMayor(descripcion, fechaTxt, filas);
-        if (tieneMayor) {
-          const resultado = await ejecutarF4FechaMayor(page, baseDatos, connectString, runId);
-          if (resultado === "F4_COMPLETADO_MAYOR") continue;
-        }
-      }
-
-      // 🖱️ Ejecución normal
-      const filaExacta = await getFilaExacta(page, sistema, descripcion);
-      if (!filaExacta) continue;
-
-      let botonProcesar = filaExacta.locator(
-        'a:has-text("Procesar Directo"), a[href*="Procesar"], a[onclick*="Procesar"]'
-      ).first();
-
-      if (!(await botonProcesar.count())) continue;
-      await botonProcesar.click({ force: true });
-      logConsole(`🖱️ Click en "${descripcion}" (force)`, runId);
-
-      // Esperar cambios
-      let estadoFinal = "DESCONOCIDO";
-      for (let intento = 0; intento < 60; intento++) {
-        await page.waitForTimeout(1000);
-        const nuevo = await leerEstadoExacto(page, sistema, descripcion);
-        if (["EN PROCESO", "COMPLETADO", "ERROR"].includes(nuevo)) {
-          estadoFinal = nuevo;
-          logConsole(`📊 ${descripcion}: ${estado} → ${nuevo}`, runId);
-          break;
-        }
-      }
-
-      if (estadoFinal === "ERROR") {
-        logConsole(`❌ ${descripcion} finalizó con error.`, runId);
-        const jobActivo = await monitorearF4Job(connectString, baseDatos, runId);
-        if (jobActivo) await monitorearF4Job(connectString, baseDatos, runId, true);
-      }
-
-      if (estadoFinal === "COMPLETADO") {
-        procesosEjecutadosGlobal.set(claveEjec, true);
-        logConsole(`✅ ${descripcion} marcado COMPLETADO.`, runId);
-      }
-
-      await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
-      await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
-      filas = await page.$$("#myTable tbody tr");
-      i = -1;
-    } catch (err) {
-      logConsole(`⚠️ Error inesperado: ${err.message}`, runId);
-      await page.waitForTimeout(2000);
-      continue;
-    }
-  }
-
-  return "Completado";
-}
 
 
 
@@ -814,7 +695,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   return "Completado";
 }
-
 
 
 module.exports = {
