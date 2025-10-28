@@ -580,24 +580,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   const buildClaveProceso = (sistema, descripcion, fechaTxt) =>
     `${normalizar(sistema)}|${normalizar(descripcion)}|${(fechaTxt || "").trim()}`;
 
-  async function getFilaExacta(page, sistema, descripcion) {
-    const filas = page.locator("#myTable tbody tr");
-    const total = await filas.count();
-    const sisN = normalizar(sistema);
-    const descN = normalizar(descripcion);
-    for (let i = 0; i < total; i++) {
-      const fila = filas.nth(i);
-      const celdas = fila.locator("td");
-      if ((await celdas.count()) < 10) continue;
-      const sis = normalizar((await celdas.nth(2).innerText()).trim());
-      const desc = normalizar((await celdas.nth(4).innerText()).trim());
-      if (sis === sisN && desc.includes(descN)) return fila;
-    }
-    return null;
-  }
-
-
-
   // ============================================================
   // 📆 Detección de “fecha mayor” (solo F4)
   // ============================================================
@@ -621,7 +603,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
     }
 
     if (fechasF4.length === 0) return false;
-
     const fechaMayorGlobal = fechasF4.reduce((a, b) => (a > b ? a : b));
     if (actual.getTime() === fechaMayorGlobal.getTime()) {
       if (typeof guardarFechaF4Persistente === "function") {
@@ -697,12 +678,29 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       logConsole(`🖱️ Click en "${descripcion}" (force)`, runId);
       await botonProcesar.click({ force: true });
 
+      // ========================================================
+      // 🧩 Caso especial: Pantalla Ejecución Manual
+      // ========================================================
+      if (page.url().includes("EjecucionManual")) {
+        logConsole("ℹ️ Se detectó pantalla de Ejecución Manual — intentando clic en botón azul 'Procesar Directo'.", runId);
+        try {
+          const btnManual = page.locator('button, a').filter({ hasText: /Procesar Directo/i }).first();
+          await btnManual.waitFor({ state: "visible", timeout: 8000 });
+          await btnManual.click({ force: true });
+          logConsole("✅ Click en botón azul 'Procesar Directo' ejecutado correctamente.", runId);
+        } catch (e) {
+          logConsole(`⚠️ No se pudo hacer clic en botón azul 'Procesar Directo': ${e.message}`, runId);
+        }
+      }
+
       // Confirma modal y espera arranque real
       if (typeof completarEjecucionManual === "function") {
         await completarEjecucionManual(page, sistema, descripcion, runId);
       }
 
-      // Espera robusta: badge de la MISMA fila
+      // ========================================================
+      // 📊 Espera robusta: badge de la MISMA fila
+      // ========================================================
       let estadoFinal = "DESCONOCIDO";
       for (let intento = 0; intento < 60; intento++) {
         await page.waitForTimeout(1000);
@@ -723,6 +721,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         logConsole(`⚠️ ${descripcion} quedó en estado ${estadoFinal} — no se marca.`, runId);
       }
 
+      // ========================================================
+      // ↩️ Volver a la tabla principal
+      // ========================================================
       await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
       await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
 
@@ -741,6 +742,8 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   return "Completado";
 }
+
+
 
 
 // =============================================================
