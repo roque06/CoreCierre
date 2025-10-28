@@ -834,9 +834,6 @@ async function ejecutarPorHref(page, fullUrl, descripcion, baseDatos, runId = "G
   }
 }
 
-// =============================================================
-// 🧩 completarEjecucionManual (modo forzado DOM + fallback visible)
-// =============================================================
 async function completarEjecucionManual(page, runId = "GLOBAL") {
   try {
     await page.waitForTimeout(800);
@@ -892,7 +889,6 @@ async function completarEjecucionManual(page, runId = "GLOBAL") {
     logConsole(`⚠️ completarEjecucionManual (forzado DOM): ${err.message}`, runId);
   }
 }
-
 
 
 
