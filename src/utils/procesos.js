@@ -111,56 +111,65 @@ async function pedirScript(script, baseDatos, runId = "GLOBAL") {
   }
 }
 
-// =============================================================
-// 🧩 Pre-scripts por descripción
-// =============================================================
 const preScripts = {
-  "CARGA LINEA DIFERIDA ITC": ["estadoMtc.sql"],
+  // 🔹 F2
+  "PROCESO LIQUIDACION PAGATODO": ["estadoMtc.sql"],
+  "RECTIFICACION PROCESOS": ["rectificar.sql"],
+  "LIQUIDACION PAGOS SERVICIOS": ["ResetestatusF2.sql"],
   "CIERRE DIARIO DE BANCOS": ["RestestatusF2.sql"],
-  "CAMBIO SECTOR CONTABLE": ["Cambio_Sector.sql"],
+
+  // 🔹 F3
   "PROVISION DE INTERESES PRESTAMOS": ["ResetEstatuiF3.sql", "PreF3.sql", "EliminarF3.sql"],
-  "LIBERACION DE EMBARGOS, CONGELAMIENTOS Y CONSULTAS": ["ResetEstatusF4.sql"],
-  "CIERRE DIARIO DIVISAS": ["Fix_Cierre_Divisas.sql", "resetEstatusF5.sql", "Prey.sql"],
   "CLASIFICACION DE SALDOS DE PRESTAMOS": ["RestF3.sql"],
+
+  // 🔹 F4
+  "LIBERACION DE EMBARGOS, CONGELAMIENTOS Y CONSULTAS": ["ResetEstatusF4.sql"],
   "CIERRE DIARIO CUENTA EFECTIVO": ["pre-f4.sql"],
   "CIERRE DIARIO CAJA (ATM)": ["cerrar_caja.sql"],
   "GENERAR ASIENTOS PESO IMPUESTOS MONEDA EXTRANJERA": ["cerrar_caja.sql"],
-  "ACTUALIZA VISTA MATERIALIZADA PLAN PAGO DWH": [
-    "Actualiza_multiuser.sql", "Reset_multi.sql", "Activa_multiuser.sql",
-  ],
-  "APLICACIÓN DE TRANSFERENCIAS AUTOMÁTICAS": ["fix_pre.sql"],
-  "RENOVACIÓN DE TARJETAS": ["reset_tarjetas.sql"],
 
+  // 🔹 F5
+  "CIERRE DIARIO DIVISAS": ["Fix_Cierre_Divisas.sql", "resetEstatusF5.sql"],
+  "ACTUALIZA VISTA MATERIALIZADA PLAN PAGO DWH": [
+    "Reset_multi.sql",
+    "Activa_multiUser.sql",
+    "Actualiza_multiuser.sql",
+  ],
+
+  // 🔹 Otros sistemas o utilitarios
+  "CAMBIO SECTOR CONTABLE": ["Cambio_Sector.sql"],
+  "CARGA LINEA DIFERIDA ITC": ["estadoMtc.sql"],
 };
 
-// =============================================================
-// 🧩 Ejecutar pre-scripts (versión 100% confiable)
-// =============================================================
+// ============================================================
+// 🧠 Función principal
+// ============================================================
 async function ejecutarPreScripts(descripcion, baseDatos, runId = "GLOBAL") {
-  if (!descripcion) return;
+  const normalizarTexto = (txt) =>
+    (txt || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toUpperCase();
 
-  const descNormalizado = normalizarTexto(descripcion);
+  const desc = normalizarTexto(descripcion);
+  const scripts = preScripts[desc];
 
-  const clave = Object.keys(preScripts).find((k) => {
-    const keyNorm = normalizarTexto(k);
-    return (
-      descNormalizado.includes(keyNorm) ||
-      keyNorm.includes(descNormalizado) ||
-      descNormalizado.startsWith(keyNorm) ||
-      descNormalizado.endsWith(keyNorm)
-    );
-  });
-
-  if (!clave) {
-    logConsole(`ℹ️ No se encontró pre-script aplicable para "${descripcion}"`, runId);
-    logWeb(`ℹ️ No se encontró pre-script aplicable para "${descripcion}"`, runId);
-    return;
-  }
-
-  for (const script of preScripts[clave]) {
-    logConsole(`🔵 [PRE-SCRIPT] Ejecutando ${script} antes de "${descripcion}"`, runId);
-    logWeb(`🔵 [PRE-SCRIPT] Ejecutando ${script} antes de "${descripcion}"`, runId);
-    await pedirScript(script, baseDatos, runId);
+  if (scripts && scripts.length > 0) {
+    for (const script of scripts) {
+      try {
+        logConsole(`📦 Ejecutando pre-script: ${script} antes de ${descripcion}`, runId);
+        logWeb(`📦 Ejecutando pre-script: ${script} antes de ${descripcion}`);
+        await pedirScript(script, baseDatos);
+        logConsole(`✅ Script ${script} ejecutado correctamente.`, runId);
+      } catch (err) {
+        logConsole(`⚠️ Error al ejecutar pre-script ${script}: ${err.message}`, runId);
+        logWeb(`⚠️ Error al ejecutar pre-script ${script}: ${err.message}`);
+      }
+    }
+  } else {
+    logConsole(`ℹ️ No hay pre-scripts configurados para ${descripcion}`, runId);
   }
 }
 
