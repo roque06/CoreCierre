@@ -204,10 +204,9 @@ async function detectarNuevoJob(connectString, prevJobs) {
   }
 }
 
-// ============================================================
-// 🔎 Monitoreo global de jobs Oracle (antes era exclusivo de F4)
-// ============================================================
-async function monitorearF4Job(connectString, baseDatos, pedirScriptFn, runId = "GLOBAL", modoEspera = false) {
+
+
+async function monitorearF4Job(connectString, baseDatos, runId = "GLOBAL", modoEspera = false) {
   try {
     let jobs = [];
 
@@ -215,16 +214,16 @@ async function monitorearF4Job(connectString, baseDatos, pedirScriptFn, runId = 
     for (let intento = 1; intento <= 10; intento++) {
       jobs = await listarJobsPA(connectString);
       if (jobs.length > 0) break;
-      console.log(`⏳ Esperando aparición de job Oracle... intento ${intento}`);
+      logConsole(`⏳ Esperando aparición de job Oracle... intento ${intento}`, runId);
       await new Promise(r => setTimeout(r, 5000));
     }
 
     if (jobs.length === 0) {
-      console.log("🚫 No hay jobs Oracle activos — no se requiere espera.");
+      logConsole("🚫 No hay jobs Oracle activos — continúa el flujo normal.", runId);
       return false;
     }
 
-    // 🧩 Filtrar solo jobs válidos
+    // 🧩 Filtrar solo jobs válidos del cierre
     const jobsFiltrados = jobs.filter(
       (j) =>
         !j.toUpperCase().includes("JOB_CIERRE_DIARIO_SCHEDULER") &&
@@ -232,40 +231,28 @@ async function monitorearF4Job(connectString, baseDatos, pedirScriptFn, runId = 
     );
 
     if (jobsFiltrados.length === 0) {
-      console.log("🚫 Solo se detectaron jobs no relevantes (omitidos).");
+      logConsole("🚫 Solo se detectaron jobs no relevantes (omitidos).", runId);
       return false;
     }
 
-    console.log(`🧩 Jobs detectados: ${jobsFiltrados.join(", ")}`);
+    logConsole(`🧩 Jobs detectados: ${jobsFiltrados.join(", ")}`, runId);
 
     // 🔄 Espera activa si modoEspera = true
     if (modoEspera) {
-      console.log(`⏳ Modo espera activo: esperando finalización de jobs Oracle...`);
+      logConsole("⏳ Esperando finalización de jobs Oracle activos...", runId);
       for (const job of jobsFiltrados) {
         await esperarJobEspecifico(connectString, job, baseDatos);
       }
-      console.log("✅ Todos los jobs Oracle finalizaron correctamente.");
+      logConsole("✅ Todos los jobs Oracle finalizaron correctamente.", runId);
     }
 
-    // ⚙️ Ejecutar callback post-job (actualización bitácora)
-    if (typeof pedirScriptFn === "function") {
-      try {
-        console.log("🧠 Ejecutando función post-job (actualización de bitácora)...");
-        await pedirScriptFn();
-        console.log("✅ Actualización de bitácora ejecutada correctamente.");
-      } catch (err) {
-        console.error("⚠️ Error ejecutando función post-job:", err.message);
-      }
-    }
-
-    console.log("Control devuelto al proceso principal.");
+    logConsole("Control devuelto al proceso principal.", runId);
     return true;
   } catch (err) {
-    console.error("❌ Error monitoreando job Oracle:", err.message);
+    logConsole(`❌ Error monitoreando job Oracle: ${err.message}`, runId);
     return false;
   }
 }
-
 
 
 
