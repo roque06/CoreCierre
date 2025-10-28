@@ -818,47 +818,63 @@ function _parseFechaF4(txt) {
   return isNaN(date.getTime()) ? null : date;
 }
 
+// ============================================================
+// 🧠 Determinar si el proceso F4 tiene la fecha mayor
+// ============================================================
 async function esF4FechaMayor(descripcionActual, fechaTxt, filasActuales, runId = "GLOBAL") {
-  const normalize = (t) =>
-    (t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toUpperCase();
+  const { logConsole } = require("./logger.js");
 
-  const descNorm = normalize(descripcionActual);
-  const actual = _parseFechaF4(fechaTxt);
+  const normalizar = (t) =>
+    (t || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toUpperCase();
 
-  if (!actual) {
-    logConsole(`⚠️ [F4] ${descNorm}: no tiene fecha válida, se omite comparación.`, runId);
+  const parseFecha = (txt) => {
+    if (!txt) return null;
+    const clean = txt.replace(/[–\-\.]/g, "/").trim();
+    const [d, m, y] = clean.split("/").map(Number);
+    if (!d || !m || !y) return null;
+    const date = new Date(`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}T00:00:00`);
+    return isNaN(date.getTime()) ? null : date;
+  };
+
+  const descNorm = normalizar(descripcionActual);
+  const fechaActual = parseFecha(fechaTxt);
+  if (!fechaActual) {
+    logConsole(`⚠️ [F4] ${descNorm}: fecha no válida (${fechaTxt || "vacía"}) → se omite comparación.`, runId);
     return false;
   }
 
   const fechasF4 = [];
-  for (const f of filasActuales) {
+  for (const fila of filasActuales) {
     try {
-      const sis = (await f.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase())) || "";
+      const sis = (await fila.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase())) || "";
       if (sis !== "F4") continue;
-      const fechaStr = (await f.$eval("td:nth-child(7)", el => el.innerText.trim())) || "";
-      const val = _parseFechaF4(fechaStr);
+
+      const fechaStr = (await fila.$eval("td:nth-child(7)", el => el.innerText.trim())) || "";
+      const val = parseFecha(fechaStr);
       if (val) fechasF4.push(val);
-    } catch { /* noop */ }
+    } catch { /* continúa si alguna fila falla */ }
   }
 
   if (fechasF4.length === 0) {
-    logConsole(`⚠️ [F4] No hay fechas F4 válidas en la tabla.`, runId);
+    logConsole(`⚠️ [F4] No se detectaron fechas válidas en la tabla para comparación.`, runId);
     return false;
   }
 
-  const fechaMayorGlobal = fechasF4.reduce((a, b) => (a > b ? a : b));
-  if (actual.getTime() === fechaMayorGlobal.getTime()) {
-    // opcional: persistencia si ya la usas en este archivo
-    if (typeof guardarFechaF4Persistente === "function") {
-      guardarFechaF4Persistente(descNorm, fechaTxt);
-    }
-    logConsole(`📆 [F4] ${descNorm} tiene la FECHA MAYOR (${fechaTxt}) → activar cursol.`, runId);
+  const fechaMayor = fechasF4.reduce((a, b) => (a > b ? a : b));
+  const fechaMayorTxt = fechaMayor.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" });
+
+  logConsole(`📅 [F4] Se detectaron ${fechasF4.length} fechas válidas. Mayor encontrada: ${fechaMayorTxt}`, runId);
+
+  if (fechaActual.getTime() === fechaMayor.getTime()) {
+    logConsole(`✅ [F4] ${descNorm} tiene la FECHA MAYOR (${fechaTxt}) → activar ejecución SQL (modo especial).`, runId);
     return true;
   } else {
-    logConsole(
-      `ℹ️ [F4] ${descNorm}: su fecha (${fechaTxt}) no es la mayor (${fechaMayorGlobal.toLocaleDateString("es-ES")}) → continuar flujo normal.`,
-      runId
-    );
+    logConsole(`ℹ️ [F4] ${descNorm}: su fecha (${fechaTxt}) NO es la mayor (${fechaMayorTxt}) → continuar flujo normal.`, runId);
     return false;
   }
 }
