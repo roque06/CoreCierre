@@ -204,9 +204,14 @@ async function detectarNuevoJob(connectString, prevJobs) {
   }
 }
 
-async function monitorearF4Job(connectString, baseDatos, pedirScriptFn, runId = "GLOBAL") {
+// ============================================================
+// 🔎 Monitoreo global de jobs Oracle (antes era exclusivo de F4)
+// ============================================================
+async function monitorearF4Job(connectString, baseDatos, pedirScriptFn, runId = "GLOBAL", modoEspera = false) {
   try {
     let jobs = [];
+
+    // 🔁 Reintentos hasta detectar jobs activos
     for (let intento = 1; intento <= 10; intento++) {
       jobs = await listarJobsPA(connectString);
       if (jobs.length > 0) break;
@@ -215,10 +220,11 @@ async function monitorearF4Job(connectString, baseDatos, pedirScriptFn, runId = 
     }
 
     if (jobs.length === 0) {
-      console.log("🚫 No hay jobs Oracle activos — se detiene el cierre.");
+      console.log("🚫 No hay jobs Oracle activos — no se requiere espera.");
       return false;
     }
 
+    // 🧩 Filtrar solo jobs válidos
     const jobsFiltrados = jobs.filter(
       (j) =>
         !j.toUpperCase().includes("JOB_CIERRE_DIARIO_SCHEDULER") &&
@@ -232,13 +238,16 @@ async function monitorearF4Job(connectString, baseDatos, pedirScriptFn, runId = 
 
     console.log(`🧩 Jobs detectados: ${jobsFiltrados.join(", ")}`);
 
-    for (const job of jobsFiltrados) {
-      await esperarJobEspecifico(connectString, job, baseDatos);
+    // 🔄 Espera activa si modoEspera = true
+    if (modoEspera) {
+      console.log(`⏳ Modo espera activo: esperando finalización de jobs Oracle...`);
+      for (const job of jobsFiltrados) {
+        await esperarJobEspecifico(connectString, job, baseDatos);
+      }
+      console.log("✅ Todos los jobs Oracle finalizaron correctamente.");
     }
 
-    console.log("✅ Todos los jobs F4 finalizaron correctamente.");
-
-    // ⚙️ Ejecutar callback si fue pasado (actualiza bitácora o corre SQL)
+    // ⚙️ Ejecutar callback post-job (actualización bitácora)
     if (typeof pedirScriptFn === "function") {
       try {
         console.log("🧠 Ejecutando función post-job (actualización de bitácora)...");
@@ -252,7 +261,7 @@ async function monitorearF4Job(connectString, baseDatos, pedirScriptFn, runId = 
     console.log("Control devuelto al proceso principal.");
     return true;
   } catch (err) {
-    console.error("❌ Error monitoreando job F4:", err.message);
+    console.error("❌ Error monitoreando job Oracle:", err.message);
     return false;
   }
 }
