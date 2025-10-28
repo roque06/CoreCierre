@@ -836,14 +836,12 @@ async function completarEjecucionManual(page, runId = "GLOBAL") {
       await page.waitForTimeout(1000);
     }
 
-    // 2️⃣ Intentar detectar el botón "Iniciar" (en cualquier contexto posible)
+    // 2️⃣ Buscar formulario principal y botón "Iniciar"
     const posiblesSelectores = [
+      'form[action*="ProcesarDirecto"] input[type="submit"][value="Iniciar"]',
+      'form[action*="ProcesarDirecto"] button:has-text("Iniciar")',
       'input[type="submit"][value="Iniciar"]',
-      'button:has-text("Iniciar")',
-      '#myModal input[type="submit"][value="Iniciar"]',
-      '#myModalAdd input[type="submit"][value="Iniciar"]',
-      '#myModal input[value="Procesar"]',
-      'form[action*="ProcesarDirecto"] input[type="submit"]',
+      'button:has-text("Iniciar")'
     ];
 
     let btnIniciar = null;
@@ -855,25 +853,32 @@ async function completarEjecucionManual(page, runId = "GLOBAL") {
       }
     }
 
-    // 3️⃣ Si se detecta, hacer clic forzado
+    // 3️⃣ Si se encuentra botón, ejecutar submit real del formulario
     if (btnIniciar) {
-      await page.evaluate((el) => el.click(), btnIniciar);
-      logConsole(`✅ Click forzado en botón "Iniciar" del formulario principal`, runId);
-      await page.waitForTimeout(1500);
+      const form = await btnIniciar.evaluateHandle(el => el.closest('form'));
+      if (form) {
+        logConsole(`🚀 Enviando formulario principal manualmente (submit real)`, runId);
+        await form.evaluate(f => f.submit());
+      } else {
+        await btnIniciar.click({ force: true });
+        logConsole(`✅ Click forzado en botón "Iniciar" (sin form detectado)`, runId);
+      }
+      await page.waitForTimeout(2000);
     } else {
-      logConsole(`⚠️ No se encontró botón "Iniciar" en la página — reintentando...`, runId);
-      await page.waitForTimeout(4000);
-      // reintento global (DOM re-render)
-      btnIniciar = await page.$('input[value="Iniciar"], button:has-text("Iniciar")');
-      if (btnIniciar) {
-        await page.evaluate((el) => el.click(), btnIniciar);
+      logConsole(`⚠️ No se encontró botón "Iniciar" — reintentando...`, runId);
+      await page.waitForTimeout(3000);
+      const retry = await page.$('input[value="Iniciar"], button:has-text("Iniciar")');
+      if (retry) {
+        const form = await retry.evaluateHandle(el => el.closest('form'));
+        if (form) await form.evaluate(f => f.submit());
+        else await retry.click({ force: true });
         logConsole(`✅ Click en botón "Iniciar" tras reintento`, runId);
       } else {
         logConsole(`❌ No se detectó botón "Iniciar" en ningún modo`, runId);
       }
     }
 
-    // 4️⃣ Esperar redirección o forzar regreso
+    // 4️⃣ Esperar redirección real (procesamiento)
     try {
       await page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 180000 });
       logConsole(`↩️ Redirección detectada correctamente a la tabla principal.`, runId);
