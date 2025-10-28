@@ -505,9 +505,8 @@ async function completarEjecucionManual(page, runId = "GLOBAL") {
     // 1️⃣ Botón azul "Procesar Directo"
     const btnProcesar = page.locator('button:has-text("Procesar Directo"), input[value="Procesar Directo"]');
     if (await btnProcesar.first().isVisible().catch(() => false)) {
-      await btnProcesar.first().click({ force: true });
       logConsole(`✅ Click en botón azul "Procesar Directo"`, runId);
-      await page.waitForTimeout(800);
+      //await page.waitForTimeout(800);
     }
 
     // 2️⃣ Botón clásico (myModalAdd)
