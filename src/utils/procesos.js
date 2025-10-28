@@ -743,79 +743,54 @@ async function ejecutarPorHref(page, fullUrl, descripcion, baseDatos, runId = "G
 
 
 
-// ============================================================
-// 🧩 completarEjecucionManual — QA7 (clic garantizado en “Iniciar”)
-// ============================================================
 async function completarEjecucionManual(page, runId = "GLOBAL") {
   try {
-    logConsole("⚙️ Iniciando completarEjecucionManual...", runId);
+    logConsole("⚙️ completarEjecucionManual (strict) — abriendo modal...", runId);
 
-    // 1️⃣ Clic en "Procesar Directo" usando XPath o texto
-    const xpathProcesar = '//*[@id="myModalAdd"]';
-    const btnProcesar = await page.$(xpathProcesar);
+    // 1) Botón superior "Procesar Directo": acepta cualquiera de los dos estilos que he visto en tu UI
+    const btnArriba = page.locator(
+      'button:has-text("Procesar Directo"), input[value="Procesar Directo"], #myModalAdd'
+    );
+    await btnArriba.first().waitFor({ state: "visible", timeout: 20000 });
+    await btnArriba.first().scrollIntoViewIfNeeded();
+    await page.waitForTimeout(200);
+    await btnArriba.first().click({ force: true });
+    logConsole("✅ Click en botón superior 'Procesar Directo'", runId);
 
-    if (btnProcesar) {
-      await btnProcesar.scrollIntoViewIfNeeded();
-      await page.waitForTimeout(800);
-      await btnProcesar.click({ force: true });
-      logConsole(`✅ Click en botón "Procesar Directo" (XPath ${xpathProcesar})`, runId);
-    } else {
-      logConsole(`⚠️ No se encontró botón "Procesar Directo" (XPath ${xpathProcesar})`, runId);
-    }
+    // 2) Esperar el modal visible
+    const modal = page.locator("#myModal");
+    await modal.waitFor({ state: "visible", timeout: 20000 });
+    logConsole("📦 Modal visible", runId);
 
-    // 2️⃣ Esperar que aparezca el modal visible
-    await page.waitForSelector("#myModal", { state: "visible", timeout: 15000 });
-    logConsole(`📄 Modal de ejecución detectado.`, runId);
+    // 3) Localizar el botón Iniciar EXACTO (tu CSS)
+    const iniciar = page.locator("#myModal > div > div > form > div.modal-footer > input");
+    await iniciar.waitFor({ state: "visible", timeout: 15000 });
 
-    // 3️⃣ Esperar que el botón Iniciar sea visible y clickeable
-    const selectorIniciar = "#myModal > div > div > form > div.modal-footer > input";
-    await page.waitForTimeout(1000);
+    // A veces el botón puede estar disabled unos ms por scripts; espera a que esté habilitado
+    await page.waitForFunction((sel) => {
+      const el = document.querySelector(sel);
+      return !!el && !el.disabled;
+    }, {}, "#myModal > div > div > form > div.modal-footer > input");
 
-    const btnIniciar = await page.$(selectorIniciar);
-    if (!btnIniciar) {
-      logConsole(`⚠️ No se detectó el botón "Iniciar" (${selectorIniciar})`, runId);
-    } else {
-      logConsole(`✅ Botón "Iniciar" localizado — esperando habilitación...`, runId);
+    // 4) Click + esperar redirección NATURAL (mismo tick con Promise.all)
+    logConsole("🖱️ Clic en 'Iniciar' (esperando redirección)...", runId);
+    await Promise.all([
+      page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 180000 }),
+      iniciar.click({ force: true })
+    ]);
 
-      // Espera activa hasta que sea clickeable (no oculto, no deshabilitado)
-      await page.waitForFunction((sel) => {
-        const el = document.querySelector(sel);
-        if (!el) return false;
-        const style = window.getComputedStyle(el);
-        return style && style.visibility !== "hidden" && style.display !== "none" && !el.disabled;
-      }, selectorIniciar, { timeout: 15000 });
-
-      await page.waitForTimeout(300);
-      await btnIniciar.scrollIntoViewIfNeeded();
-
-      try {
-        await btnIniciar.click({ delay: 120 });
-        logConsole(`✅ Click real ejecutado en botón "Iniciar" (${selectorIniciar})`, runId);
-      } catch (err) {
-        logConsole(`⚠️ Click directo falló (${err.message}) — aplicando fallback via JS`, runId);
-        await page.evaluate((sel) => {
-          const el = document.querySelector(sel);
-          if (el) el.click();
-        }, selectorIniciar);
-        logConsole(`✅ Click forzado en botón "Iniciar" vía JavaScript`, runId);
-      }
-    }
-
-    // 4️⃣ Esperar redirección natural
-    try {
-      logConsole(`⏳ Esperando redirección natural de la web...`, runId);
-      await page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 180000 });
-      await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
-      logConsole(`✅ Redirección detectada y tabla principal cargada nuevamente.`, runId);
-    } catch (err) {
-      logConsole(`⚠️ No se detectó redirección automática (${err.message}) — recargando manualmente.`, runId);
-      const base = page.url().split("/ProcesoCierre")[0];
-      await navegarConRetries(page, `${base}/ProcesoCierre/Procesar`);
-      await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
-      logConsole(`✅ Tabla principal recargada manualmente.`, runId);
-    }
+    // 5) Asegurar que la tabla esté lista
+    await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
+    await page.waitForTimeout(300);
+    logConsole("↩️ Redirección natural detectada, tabla lista.", runId);
   } catch (err) {
-    logConsole(`⚠️ completarEjecucionManual (error): ${err.message}`, runId);
+    logConsole(`⚠️ completarEjecucionManual (strict) error: ${err.message}`, runId);
+    // fallback: si por lo que sea no redirigió, regresa manualmente
+    try {
+      const base = page.url().split("/ProcesoCierre")[0] || "";
+      await page.goto(`${base}/ProcesoCierre/Procesar`, { waitUntil: "load", timeout: 120000 });
+      await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
+    } catch { }
   }
 }
 
