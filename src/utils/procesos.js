@@ -543,25 +543,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   const buildClaveProceso = (sistema, descripcion, fechaTxt) =>
     `${normalizar(sistema)}|${normalizar(descripcion)}|${(fechaTxt || "").trim()}`;
 
-  async function esF4FechaMayor(descripcionActual, fechaTxt, filasActuales) {
-    const descNorm = normalizar(descripcionActual);
-    const actual = parseFecha(fechaTxt);
-    if (!actual) return false;
-    const fechasF4 = [];
-    for (const f of filasActuales) {
-      try {
-        const sis = (await f.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase())) || "";
-        if (sis !== "F4") continue;
-        const fechaStr = (await f.$eval("td:nth-child(7)", el => el.innerText.trim())) || "";
-        const val = parseFecha(fechaStr);
-        if (val) fechasF4.push(val);
-      } catch { }
-    }
-    if (fechasF4.length === 0) return false;
-    const fechaMayorGlobal = fechasF4.reduce((a, b) => (a > b ? a : b));
-    return actual.getTime() === fechaMayorGlobal.getTime();
-  }
-
   let filas = await page.$$("#myTable tbody tr");
 
   for (let i = 0; i < filas.length; i++) {
@@ -580,15 +561,14 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
       logConsole(`▶️ [${sistema}] ${descripcion} (${estado}) — Fecha=${fechaTxt}`, runId);
 
-      // ========================================================
-      // 🧠 F4 con fecha mayor → ejecutar SQL sin clic
-      // ========================================================
-      if (sistema.toUpperCase() === "F4") {
-        const tieneMayor = await esF4FechaMayor(descripcion, fechaTxt, filas);
-        if (tieneMayor && typeof ejecutarF4FechaMayor === "function") {
+      // =============================== 🧠 F4 Fecha Mayor ===============================
+      if (sistema.toUpperCase() === "F4" && typeof ejecutarF4FechaMayor === "function") {
+        const filasAct = await page.$$("#myTable tbody tr");
+        const tieneMayor = await esF4FechaMayor(descripcion, fechaTxt, filasAct);
+        if (tieneMayor) {
           const resultado = await ejecutarF4FechaMayor(page, baseDatos, connectString, runId);
           if (resultado === "F4_COMPLETADO_MAYOR") {
-            logConsole(`✅ [F4] ${descripcion} completado vía SQL (fecha mayor).`, runId);
+            logConsole(`✅ [F4] ${descripcion} completado vía SQL.`, runId);
             await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
             await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
             filas = await page.$$("#myTable tbody tr");
@@ -597,20 +577,12 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         }
       }
 
-      // ========================================================
-      // 🖱️ Ejecución normal
-      // ========================================================
-      if (typeof ejecutarPreScripts === "function") {
-        await ejecutarPreScripts(descripcion, baseDatos);
-      }
-
+      // =============================== 🖱️ Click normal ===============================
       const filaExacta = await getFilaExacta(page, sistema, descripcion);
       if (!filaExacta) continue;
-
-      let botonProcesar = filaExacta.locator(
-        'a:has-text("Procesar Directo"), a:has-text("PROCESAR DIRECTO"), a[href*="Procesar"], a[onclick*="Procesar"]'
+      const botonProcesar = filaExacta.locator(
+        'a:has-text("Procesar Directo"), a[href*="Procesar"], a[onclick*="Procesar"]'
       ).first();
-
       if (!(await botonProcesar.count())) continue;
 
       await botonProcesar.click({ force: true });
@@ -618,30 +590,26 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
       try {
         await Promise.race([
-          page.waitForURL(/(EjecucionManual|ProcesarDirecto)/i, { timeout: 20000 }),
-          page.waitForSelector('#myModalAdd, input#myModalAdd', { timeout: 20000 })
+          page.waitForURL(/(EjecucionManual|ProcesarDirecto)/i, { timeout: 25000 }),
+          page.waitForSelector("#myModalAdd", { timeout: 25000 })
         ]);
 
-        const btnManual = page.locator('#myModalAdd');
-        if (await btnManual.count()) {
-          await btnManual.click({ force: true });
-          logConsole("✅ Click en botón azul 'Procesar Directo'", runId);
+        const btn = page.locator("#myModalAdd");
+        if (await btn.count()) {
+          await btn.click({ force: true });
+          logConsole("✅ Click en botón azul 'Procesar Directo'.", runId);
         }
 
         const btnIniciar = page.locator('xpath=//*[@id="myModal"]/div/div/form/div[2]/input');
         if (await btnIniciar.count()) {
           await btnIniciar.click({ force: true });
-          logConsole("✅ Click en botón 'Iniciar' (modal)", runId);
+          logConsole("✅ Click en botón 'Iniciar' dentro del modal.", runId);
         }
-      } catch { }
-
-      if (typeof completarEjecucionManual === "function") {
-        await completarEjecucionManual(page, sistema, descripcion, runId);
+      } catch (e) {
+        logConsole(`⚠️ No se detectó modal: ${e.message}`, runId);
       }
 
-      // ========================================================
-      // 📊 Monitoreo de estado
-      // ========================================================
+      // =============================== 📊 Estado final ===============================
       let estadoFinal = "DESCONOCIDO";
       for (let intento = 0; intento < 60; intento++) {
         await page.waitForTimeout(1000);
@@ -655,10 +623,19 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
       if (estadoFinal === "ERROR") {
         logConsole(`❌ ${descripcion} finalizó con error.`, runId);
-        const jobActivo = await monitorearF4Job(connectString, baseDatos, runId);
-        if (jobActivo) {
-          await monitorearF4Job(connectString, baseDatos, runId, true);
-          logConsole(`✅ Job Oracle finalizado, continúa flujo.`, runId);
+
+        // 🔎 Monitorear job si hay error
+        try {
+          const hayJob = await monitorearF4Job(connectString, baseDatos, runId);
+          if (hayJob) {
+            logConsole("🟡 Job Oracle activo — esperando finalización...", runId);
+            await monitorearF4Job(connectString, baseDatos, runId, true);
+            logConsole("✅ Job Oracle finalizado, retomando flujo.", runId);
+          } else {
+            logConsole("ℹ️ No se detectaron jobs activos — continúa cierre.", runId);
+          }
+        } catch (e) {
+          logConsole(`⚠️ Error monitoreando job Oracle: ${e.message}`, runId);
         }
       }
 
@@ -667,6 +644,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         logConsole(`✅ ${descripcion} marcado COMPLETADO.`, runId);
       }
 
+      // 🔄 Refrescar tabla segura (nuevo contexto)
       await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
       await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
       filas = await page.$$("#myTable tbody tr");
@@ -674,6 +652,10 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
     } catch (err) {
       logConsole(`⚠️ Error inesperado: ${err.message}`, runId);
       await page.waitForTimeout(3000);
+      // 🔄 Refrescar contexto tras error
+      await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
+      await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
+      filas = await page.$$("#myTable tbody tr");
       continue;
     }
   }
