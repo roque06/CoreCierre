@@ -673,6 +673,147 @@ async function completarEjecucionManual(page, runId = "GLOBAL") {
   }
 }
 
+async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = "GLOBAL") {
+  await page.waitForSelector("#myTable tbody tr");
+  logConsole(`▶️ Analizando sistema ${sistema}...`, runId);
+
+  const procesosEjecutadosGlobal = global.procesosEjecutadosGlobal || new Map();
+  global.procesosEjecutadosGlobal = procesosEjecutadosGlobal;
+
+  const normalizar = (t) =>
+    (t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toUpperCase();
+
+  const parseFecha = (txt) => {
+    if (!txt) return null;
+    const clean = txt.replace(/[–\-\.]/g, "/").trim();
+    const [d, m, y] = clean.split("/").map(Number);
+    if (!d || !m || !y) return null;
+    const date = new Date(`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}T00:00:00`);
+    return isNaN(date.getTime()) ? null : date;
+  };
+
+  const buildClaveProceso = (sistema, descripcion, fechaTxt) =>
+    `${normalizar(sistema)}|${normalizar(descripcion)}|${(fechaTxt || "").trim()}`;
+
+  let filas = await page.$$("#myTable tbody tr");
+
+  for (let i = 0; i < filas.length; i++) {
+    try {
+      const fila = filas[i];
+      const sis = (await fila.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase())) || "";
+      if (sis !== sistema.toUpperCase()) continue;
+
+      const descripcion = (await fila.$eval("td:nth-child(5)", el => el.innerText.trim())) || "";
+      const fechaTxt = (await fila.$eval("td:nth-child(7)", el => el.innerText.trim())) || "";
+      const estado = ((await fila.$eval("td:nth-child(10)", el => el.innerText.trim())) || "").toUpperCase();
+
+      const claveEjec = buildClaveProceso(sistema, descripcion, fechaTxt);
+      if (!["PENDIENTE", "ERROR"].includes(estado)) continue;
+      if (procesosEjecutadosGlobal.has(claveEjec)) continue;
+
+      logConsole(`▶️ [${sistema}] ${descripcion} (${estado}) — Fecha=${fechaTxt}`, runId);
+
+      // =============================== 🧠 F4 Fecha Mayor ===============================
+      if (sistema.toUpperCase() === "F4" && typeof ejecutarF4FechaMayor === "function") {
+        const filasAct = await page.$$("#myTable tbody tr");
+        const tieneMayor = await esF4FechaMayor(descripcion, fechaTxt, filasAct);
+        if (tieneMayor) {
+          const resultado = await ejecutarF4FechaMayor(page, baseDatos, connectString, runId);
+          if (resultado === "F4_COMPLETADO_MAYOR") {
+            logConsole(`✅ [F4] ${descripcion} completado vía SQL.`, runId);
+            await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
+            await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
+            filas = await page.$$("#myTable tbody tr");
+            continue;
+          }
+        }
+      }
+
+      // =============================== 🖱️ Click normal ===============================
+      const filaExacta = await getFilaExacta(page, sistema, descripcion);
+      if (!filaExacta) continue;
+      const botonProcesar = filaExacta.locator(
+        'a:has-text("Procesar Directo"), a[href*="Procesar"], a[onclick*="Procesar"]'
+      ).first();
+      if (!(await botonProcesar.count())) continue;
+
+      await botonProcesar.click({ force: true });
+      logConsole(`🖱️ Click en "${descripcion}" (force)`, runId);
+
+      try {
+        await Promise.race([
+          page.waitForURL(/(EjecucionManual|ProcesarDirecto)/i, { timeout: 25000 }),
+          page.waitForSelector("#myModalAdd", { timeout: 25000 })
+        ]);
+
+        const btn = page.locator("#myModalAdd");
+        if (await btn.count()) {
+          await btn.click({ force: true });
+          logConsole("✅ Click en botón azul 'Procesar Directo'.", runId);
+        }
+
+        const btnIniciar = page.locator('xpath=//*[@id="myModal"]/div/div/form/div[2]/input');
+        if (await btnIniciar.count()) {
+          await btnIniciar.click({ force: true });
+          logConsole("✅ Click en botón 'Iniciar' dentro del modal.", runId);
+        }
+      } catch (e) {
+        logConsole(`⚠️ No se detectó modal: ${e.message}`, runId);
+      }
+
+      // =============================== 📊 Estado final ===============================
+      let estadoFinal = "DESCONOCIDO";
+      for (let intento = 0; intento < 60; intento++) {
+        await page.waitForTimeout(1000);
+        const nuevo = await leerEstadoExacto(page, sistema, descripcion);
+        if (["EN PROCESO", "COMPLETADO", "ERROR"].includes(nuevo)) {
+          estadoFinal = nuevo;
+          logConsole(`📊 ${descripcion}: ${estado} → ${nuevo}`, runId);
+          break;
+        }
+      }
+
+      if (estadoFinal === "ERROR") {
+        logConsole(`❌ ${descripcion} finalizó con error.`, runId);
+
+        // 🔎 Monitorear job si hay error
+        try {
+          const hayJob = await monitorearF4Job(connectString, baseDatos, runId);
+          if (hayJob) {
+            logConsole("🟡 Job Oracle activo — esperando finalización...", runId);
+            await monitorearF4Job(connectString, baseDatos, runId, true);
+            logConsole("✅ Job Oracle finalizado, retomando flujo.", runId);
+          } else {
+            logConsole("ℹ️ No se detectaron jobs activos — continúa cierre.", runId);
+          }
+        } catch (e) {
+          logConsole(`⚠️ Error monitoreando job Oracle: ${e.message}`, runId);
+        }
+      }
+
+      if (estadoFinal === "COMPLETADO") {
+        procesosEjecutadosGlobal.set(claveEjec, true);
+        logConsole(`✅ ${descripcion} marcado COMPLETADO.`, runId);
+      }
+
+      // 🔄 Refrescar tabla segura (nuevo contexto)
+      await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
+      await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
+      filas = await page.$$("#myTable tbody tr");
+      i = -1;
+    } catch (err) {
+      logConsole(`⚠️ Error inesperado: ${err.message}`, runId);
+      await page.waitForTimeout(3000);
+      // 🔄 Refrescar contexto tras error
+      await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
+      await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
+      filas = await page.$$("#myTable tbody tr");
+      continue;
+    }
+  }
+
+  return "Completado";
+}
 
 
 
