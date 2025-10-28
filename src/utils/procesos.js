@@ -523,7 +523,6 @@ function cargarFechaF4Persistente(descripcion) {
 }
 
 
-
 async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = "GLOBAL") {
   const { esperarEstadoTabla } = require("./navegacion.js");
   await page.waitForSelector("#myTable tbody tr");
@@ -533,9 +532,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   global.procesosEjecutadosGlobal = procesosEjecutadosGlobal;
   const f4Procesados = new Set();
 
-  // ============================================================
-  // 🧩 Helper: parsear fechas
-  // ============================================================
   const parseFecha = (txt) => {
     if (!txt) return null;
     const clean = txt.replace(/[–\-\.]/g, "/").trim();
@@ -545,9 +541,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
     return isNaN(date.getTime()) ? null : date;
   };
 
-  // ============================================================
-  // 🧩 Determinar si F4 tiene fecha mayor
-  // ============================================================
   async function esF4FechaMayor(descripcionActual, fechaTxt, filasActuales, runId = "GLOBAL") {
     const normalize = (t) =>
       t.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -567,7 +560,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         const fechaStr = (await f.$eval("td:nth-child(7)", el => el.innerText.trim())) || "";
         const val = parseFecha(fechaStr);
         if (val) fechasF4.push(val);
-      } catch {}
+      } catch { }
     }
 
     if (fechasF4.length === 0) return false;
@@ -578,9 +571,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
     return actual.getTime() === fechaMayorGlobal.getTime();
   }
 
-  // ============================================================
-  // 🔁 Recorrer procesos
-  // ============================================================
   let filas = await page.$$("#myTable tbody tr");
 
   for (let i = 0; i < filas.length; i++) {
@@ -626,85 +616,72 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         if (!(await boton.count()))
           boton = filaLoc.locator('a:has-text("Procesar"), button:has-text("Procesar")');
 
-        if (await boton.count()) {
-          await boton.first().scrollIntoViewIfNeeded();
-          await boton.first().click({ force: true });
-          logConsole(`✅ Click inicial en "Procesar Directo"`, runId);
+        if (!(await boton.count())) {
+          logConsole(`⚠️ No se encontró botón "Procesar Directo" para ${descripcion}`, runId);
+          continue;
+        }
 
-          // Esperar pantalla ejecución manual
-          await page.waitForSelector('text=Ejecución Manual de Proceso', { timeout: 20000 });
-          logConsole(`📄 Pantalla "Ejecución Manual de Proceso" visible`, runId);
+        // ------------------------------------------------------------
+        // Paso 1️⃣ — Click en Procesar Directo
+        // ------------------------------------------------------------
+        await boton.first().scrollIntoViewIfNeeded();
+        await boton.first().click({ force: true });
+        logConsole(`✅ Click inicial en "Procesar Directo"`, runId);
 
-          // Clic en botón superior "Procesar Directo" (abre modal)
-          const btnProcesar = await page.$('//*[@id="myModalAdd"]');
-          if (btnProcesar) {
-            await btnProcesar.scrollIntoViewIfNeeded();
-            await btnProcesar.click({ force: true });
-            logConsole(`✅ Click en botón "Procesar Directo" (XPath //*[@id="myModalAdd"])`, runId);
+        // Esperar la pantalla de ejecución manual
+        await page.waitForSelector('text=Ejecución Manual de Proceso', { timeout: 20000 });
+        logConsole(`📄 Pantalla "Ejecución Manual de Proceso" visible`, runId);
+
+        // ------------------------------------------------------------
+        // Paso 2️⃣ — Click en el botón superior (abre el modal)
+        // ------------------------------------------------------------
+        const btnProcesar = await page.$('//*[@id="myModalAdd"]');
+        if (!btnProcesar) {
+          logConsole(`❌ No se encontró botón superior "Procesar Directo"`, runId);
+          continue;
+        }
+        await btnProcesar.scrollIntoViewIfNeeded();
+        await btnProcesar.click({ force: true });
+        logConsole(`✅ Click en botón "Procesar Directo" (XPath //*[@id="myModalAdd"])`, runId);
+
+        // ------------------------------------------------------------
+        // Paso 3️⃣ — Esperar modal y hacer clic en "Iniciar"
+        // ------------------------------------------------------------
+        let modalAbierto = false;
+        try {
+          modalAbierto = await page.waitForSelector('#myModal', { state: 'visible', timeout: 6000 }).then(() => true).catch(() => false);
+        } catch { }
+        if (modalAbierto) {
+          logConsole(`✅ Modal visible — ejecución manual requerida`, runId);
+          const btnIniciar = await page.$('//*[@id="myModal"]/div/div/form/div[2]/input');
+          if (btnIniciar) {
+            await btnIniciar.scrollIntoViewIfNeeded();
+            await Promise.all([
+              page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 120000 }),
+              btnIniciar.click({ force: true })
+            ]);
+            logConsole(`✅ Click en botón "Iniciar" ejecutado correctamente`, runId);
           } else {
-            logConsole(`❌ No se encontró botón superior "Procesar Directo"`, runId);
-            continue;
-          }
-
-          // ============================================================
-          // 🧠 Modal con auto-redirección o clic manual (QA7 tolerante)
-          // ============================================================
-          let redireccionDetectada = false;
-
-          try {
-            const modalPromise = page.waitForSelector('#myModal', { state: 'visible', timeout: 8000 }).catch(() => null);
-            const redirPromise = page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 8000 }).then(() => true).catch(() => false);
-
-            const modalVisible = await modalPromise;
-            redireccionDetectada = await redirPromise;
-
-            if (redireccionDetectada) {
-              logConsole(`⚙️ El sistema redirigió automáticamente antes del clic en "Iniciar"`, runId);
-            } else if (modalVisible) {
-              logConsole(`✅ Modal visible — ejecución manual requerida`, runId);
-              const btnIniciar = await page.$('//*[@id="myModal"]/div/div/form/div[2]/input');
-              if (btnIniciar) {
-                await btnIniciar.scrollIntoViewIfNeeded();
-                await Promise.all([
-                  page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 120000 }),
-                  btnIniciar.click({ force: true }),
-                ]);
-                logConsole(`✅ Click manual en botón "Iniciar" ejecutado`, runId);
-                redireccionDetectada = true;
-              } else {
-                logConsole(`⚠️ Modal detectado pero no se encontró botón "Iniciar"`, runId);
-              }
-            } else {
-              logConsole(`⚠️ Ni modal ni redirección detectados — comportamiento inesperado`, runId);
-            }
-          } catch (err) {
-            logConsole(`⚠️ Error durante manejo del modal: ${err.message}`, runId);
-          }
-
-          // ============================================================
-          // 🔁 Si hubo redirección, verificar estado DOM real
-          // ============================================================
-          if (redireccionDetectada) {
-            try {
-              await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
-              logConsole(`✅ Tabla principal recargada tras ejecución.`, runId);
-
-              // Lectura real y segura del estado
-              const estadoReal = await esperarEstadoTabla(page, descripcion);
-              const estadoNorm = (estadoReal || "").trim().toUpperCase();
-              if (["PENDIENTE", "", "EN PROCESO"].includes(estadoNorm)) {
-                logConsole(`📌 Estado DOM real de "${descripcion}": ${estadoNorm || "PENDIENTE"}`, runId);
-              } else if (estadoNorm === "COMPLETADO") {
-                logConsole(`📌 Estado DOM real de "${descripcion}": COMPLETADO`, runId);
-              } else {
-                logConsole(`📌 Estado DOM no reconocido ("${estadoReal}") — se marca como PENDIENTE`, runId);
-              }
-            } catch (e) {
-              logConsole(`⚠️ Error leyendo estado tras redirección: ${e.message}`, runId);
-            }
+            logConsole(`⚠️ Modal visible pero sin botón "Iniciar"`, runId);
           }
         } else {
-          logConsole(`⚠️ No se encontró botón "Procesar Directo" en la tabla para ${descripcion}`, runId);
+          logConsole(`⚙️ El sistema recargó automáticamente sin mostrar modal`, runId);
+        }
+
+        // ------------------------------------------------------------
+        // Paso 4️⃣ — Confirmar tabla principal y leer estado real
+        // ------------------------------------------------------------
+        await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
+        logConsole(`✅ Tabla principal recargada tras ejecución.`, runId);
+
+        const estadoReal = await esperarEstadoTabla(page, descripcion);
+        const estadoNorm = (estadoReal || "").trim().toUpperCase();
+        if (["PENDIENTE", "", "EN PROCESO"].includes(estadoNorm)) {
+          logConsole(`📌 Estado DOM real de "${descripcion}": ${estadoNorm || "PENDIENTE"}`, runId);
+        } else if (estadoNorm === "COMPLETADO") {
+          logConsole(`📌 Estado DOM real de "${descripcion}": COMPLETADO`, runId);
+        } else {
+          logConsole(`📌 Estado DOM no reconocido ("${estadoReal}") — se marca como PENDIENTE`, runId);
         }
 
         procesosEjecutadosGlobal.set(descUpper, true);
@@ -761,6 +738,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   return "Completado";
 }
+
 
 // =============================================================
 // 🔄 Ejecutar proceso por URL directa
