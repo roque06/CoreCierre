@@ -162,35 +162,74 @@ async function ejecutarPreScripts(descripcion, baseDatos, runId = "GLOBAL") {
 }
 
 
-async function esperarHastaCompletado(page, codSistema, codProceso, descripcion, claveProceso, runId = "GLOBAL") {
-  const nombreProc = descripcion || claveProceso;
-  logConsole(`⏳ Monitoreando estado de "${nombreProc}" hasta completado...`, runId);
+async function esperarCompletado(page, descripcion, runId = "GLOBAL") {
+  const normalizar = (t) =>
+    t.normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toUpperCase();
+
+  const descNorm = normalizar(descripcion);
+  logConsole(`⏳ Esperando que "${descripcion}" cambie a COMPLETADO...`, runId);
 
   const inicio = Date.now();
-  let estadoAnterior = "";
+  let estadoPrevio = "";
 
-  while (true) {
-    await page.waitForTimeout(10000);
-    const estado = await leerEstadoExacto(page, codSistema, descripcion); // ✅ CAMBIO CLAVE
+  for (; ;) {
+    try {
+      await page.waitForSelector("#myTable tbody tr", { timeout: 15000 });
+      const filas = await page.$$("#myTable tbody tr");
+      let estadoActual = "";
 
-    if (estado !== estadoAnterior) {
-      estadoAnterior = estado;
-      logConsole(`📊 ${nombreProc}. ${estado}`, runId);
-    }
+      // Buscar exactamente la fila que contiene la descripción (evita falsos positivos)
+      for (const fila of filas) {
+        const desc = normalizar(await fila.$eval("td:nth-child(5)", el => el.innerText.trim() || ""));
+        if (desc.includes(descNorm) || descNorm.includes(desc)) {
+          estadoActual = (await fila.$eval("td:nth-child(10)", el => el.innerText.trim().toUpperCase())) || "";
+          break;
+        }
+      }
 
-    if (estado === "EN PROCESO" || estado === "DESCONOCIDO" || estado === "") continue;
-    if (estado === "COMPLETADO") {
-      const minutos = ((Date.now() - inicio) / 60000).toFixed(2);
-      logConsole(`✅ ${nombreProc}. Completado en ${minutos} minutos`, runId);
-      return "Completado";
-    }
-    if (estado === "ERROR") {
-      const minutos = ((Date.now() - inicio) / 60000).toFixed(2);
-      logConsole(`❌ ${nombreProc}. Finalizó con error en ${minutos} minutos`, runId);
-      return "Error";
+      if (!estadoActual) {
+        logConsole(`⚠️ No se encontró fila visible para "${descripcion}" (reintentando)...`, runId);
+        await page.waitForTimeout(4000);
+        continue;
+      }
+
+      if (estadoActual !== estadoPrevio) {
+        logConsole(`📊 Estado actualizado de "${descripcion}": ${estadoActual}`, runId);
+        estadoPrevio = estadoActual;
+      }
+
+      // Detectar estado final
+      if (estadoActual === "COMPLETADO") {
+        const duracion = ((Date.now() - inicio) / 60000).toFixed(2);
+        logConsole(`✅ "${descripcion}" COMPLETADO en ${duracion} min`, runId);
+        return "COMPLETADO";
+      }
+
+      if (estadoActual === "ERROR") {
+        const duracion = ((Date.now() - inicio) / 60000).toFixed(2);
+        logConsole(`❌ "${descripcion}" terminó con ERROR tras ${duracion} min`, runId);
+        return "ERROR";
+      }
+
+      // Si no cambia, seguimos esperando
+      await page.waitForTimeout(5000);
+    } catch (err) {
+      if (err.message?.includes("context")) {
+        logConsole(`⚠️ Error de contexto DOM (${err.message}) — reintentando lectura`, runId);
+        await page.waitForTimeout(5000);
+        continue;
+      } else {
+        logConsole(`⚠️ Error leyendo estado de "${descripcion}": ${err.message}`, runId);
+        await page.waitForTimeout(5000);
+      }
     }
   }
 }
+
 
 
 
