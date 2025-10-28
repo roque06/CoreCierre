@@ -651,23 +651,42 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       // ========================================================
       // 🧩 Esperar carga de pantalla manual o ProcesarDirecto
       // ========================================================
+      // 🧩 Esperar carga de pantalla manual o ProcesarDirecto
       try {
         await Promise.race([
           page.waitForURL(/(EjecucionManual|ProcesarDirecto)/i, { timeout: 25000 }),
-          page.waitForSelector('button:has-text("Procesar Directo")', { timeout: 25000 })
+          page.waitForSelector('#myModalAdd, input#myModalAdd', { timeout: 25000 })
         ]);
 
         logConsole("📄 Pantalla de Ejecución Manual/ProcesarDirecto detectada.", runId);
 
-        const btnManual = page.locator('button, a').filter({ hasText: /Procesar Directo/i }).first();
+        // 1️⃣ Buscar botón azul “Procesar Directo” (input con id=myModalAdd)
+        let btnManual = page.locator('#myModalAdd');
+        if (!(await btnManual.count())) {
+          // 2️⃣ Fallback al XPath proporcionado
+          btnManual = page.locator('xpath=//*[@id="myModalAdd"]');
+        }
+
         await btnManual.waitFor({ state: "visible", timeout: 10000 });
         await btnManual.click({ force: true });
         logConsole("✅ Click en botón azul 'Procesar Directo' ejecutado correctamente.", runId);
 
-        await page.waitForTimeout(3000); // da tiempo al backend
+        // 3️⃣ Esperar posible aparición del botón “Iniciar” dentro del modal
+        try {
+          const btnIniciar = page.locator('xpath=//*[@id="myModal"]/div/div/form/div[2]/input');
+          await btnIniciar.waitFor({ state: "visible", timeout: 8000 });
+          await btnIniciar.click({ force: true });
+          logConsole("✅ Click en botón 'Iniciar' dentro del modal ejecutado correctamente.", runId);
+        } catch {
+          logConsole("ℹ️ No se detectó botón 'Iniciar' (puede ser ejecución directa).", runId);
+        }
+
+        // ⏳ Pausa para permitir arranque real del job Oracle
+        await page.waitForTimeout(3000);
       } catch (e) {
-        logConsole(`⚠️ No se detectó pantalla de ejecución manual o botón azul: ${e.message}`, runId);
+        logConsole(`⚠️ No se detectó pantalla manual ni botón azul 'Procesar Directo': ${e.message}`, runId);
       }
+
 
       // Confirma modal y espera arranque real
       if (typeof completarEjecucionManual === "function") {
