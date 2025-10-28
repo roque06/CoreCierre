@@ -652,6 +652,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       // 🧩 Esperar carga de pantalla manual o ProcesarDirecto
       // ========================================================
       // 🧩 Esperar carga de pantalla manual o ProcesarDirecto
+      // 🧩 Esperar carga de pantalla manual o ProcesarDirecto
       try {
         await Promise.race([
           page.waitForURL(/(EjecucionManual|ProcesarDirecto)/i, { timeout: 25000 }),
@@ -686,6 +687,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       } catch (e) {
         logConsole(`⚠️ No se detectó pantalla manual ni botón azul 'Procesar Directo': ${e.message}`, runId);
       }
+
 
 
       // Confirma modal y espera arranque real
