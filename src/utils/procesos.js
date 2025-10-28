@@ -543,7 +543,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   };
 
   // ============================================================
-  // 🧩 Determinar si es fecha mayor
+  // 🧩 Determinar si F4 tiene fecha mayor
   // ============================================================
   async function esF4FechaMayor(descripcionActual, fechaTxt, filasActuales, runId = "GLOBAL") {
     const normalize = (t) =>
@@ -593,7 +593,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   }
 
   // ============================================================
-  // 🔁 Recorrer filas de procesos
+  // 🔁 Recorrer procesos de la tabla
   // ============================================================
   let filas = await page.$$("#myTable tbody tr");
 
@@ -632,17 +632,19 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         try {
           const tieneMayor = await esF4FechaMayor(descripcion, fechaTxt, filas, runId);
 
+          // 🔸 Fecha mayor → SQL sin clics (lógica intacta)
           if (tieneMayor) {
             logConsole(`📆 [F4 Fecha Mayor] Ejecutando Correr Calendario vía SQL`, runId);
             const resultadoF4 = await ejecutarF4FechaMayor(page, baseDatos, connectString, runId);
             if (resultadoF4 === "F4_COMPLETADO_MAYOR")
               await esperarCorrerCalendarioF4(page, baseDatos, connectString, runId);
-          } else {
+          }
+          // 🔹 Sin fecha mayor → flujo manual (clics)
+          else {
             logConsole(`🖱️ [F4] Correr Calendario sin fecha mayor → flujo normal`, runId);
 
             const filaLoc = page.locator(`#myTable tbody tr:has-text("${descripcion}")`);
             let boton = filaLoc.locator('a:has-text("Procesar Directo"), button:has-text("Procesar Directo")');
-
             if (!(await boton.count()))
               boton = filaLoc.locator('a:has-text("Procesar"), button:has-text("Procesar")');
 
@@ -651,11 +653,14 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
               await boton.first().click({ force: true });
               logConsole(`✅ Click en "Procesar Directo" para abrir ejecución manual`, runId);
 
-              // 🕓 Esperar a que cargue la pantalla de ejecución manual
-              await page.waitForSelector('#myModalAdd, text=Ejecución Manual de Proceso', { timeout: 20000 });
+              // 🕓 Esperar pantalla de ejecución manual (arreglo selector)
+              await Promise.race([
+                page.waitForSelector('#myModalAdd', { timeout: 20000 }).catch(() => null),
+                page.getByText('Ejecución Manual de Proceso', { exact: false }).waitFor({ timeout: 20000 }).catch(() => null)
+              ]);
               logConsole(`📄 Pantalla "Ejecución Manual de Proceso" detectada`, runId);
 
-              // 🧩 Ejecutar clicks en "Procesar Directo" y "Iniciar"
+              // 🧩 Ejecutar clics reales en Procesar Directo e Iniciar
               await completarEjecucionManual(page, runId);
 
               const estadoFinal = await esperarCompletado(page, descripcion, runId, "F4", connectString, baseDatos);
