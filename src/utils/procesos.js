@@ -553,9 +553,8 @@ async function completarEjecucionManual(page, runId = "GLOBAL") {
   }
 }
 
-// ============================================================
-// ▶️ Ejecutar proceso (versión ajustada con completarEjecucionManual)
-// ============================================================
+
+
 // ============================================================
 // ▶️ Ejecutar proceso (versión final adaptada con control de jobs y UPDATE preciso)
 // ============================================================
@@ -754,6 +753,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   return "Completado";
 }
+
 
 
 
