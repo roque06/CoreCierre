@@ -823,12 +823,11 @@ async function ejecutarPorHref(page, fullUrl, descripcion, baseDatos, runId = "G
 }
 
 
-
 async function completarEjecucionManual(page, runId = "GLOBAL") {
   try {
     await page.waitForTimeout(1000);
 
-    // 1️⃣ Click en botón "Procesar Directo" (visible arriba)
+    // 1️⃣ Click en botón "Procesar Directo"
     const btnProcesar = page.locator('button:has-text("Procesar Directo"), input[value="Procesar Directo"]');
     if (await btnProcesar.first().isVisible().catch(() => false)) {
       await btnProcesar.first().click({ force: true });
@@ -853,49 +852,59 @@ async function completarEjecucionManual(page, runId = "GLOBAL") {
       }
     }
 
-    // 3️⃣ Si se encuentra botón, ejecutar submit real del formulario
+    // 3️⃣ Si hay botón, enviar formulario con submit real
     if (btnIniciar) {
       const form = await btnIniciar.evaluateHandle(el => el.closest('form'));
       if (form) {
         logConsole(`🚀 Enviando formulario principal manualmente (submit real)`, runId);
-        await form.evaluate(f => f.submit());
+        await Promise.all([
+          form.evaluate(f => f.submit()),
+          page.waitForNavigation({ waitUntil: "load", timeout: 180000 })
+        ]);
       } else {
         await btnIniciar.click({ force: true });
         logConsole(`✅ Click forzado en botón "Iniciar" (sin form detectado)`, runId);
+        await page.waitForNavigation({ waitUntil: "load", timeout: 180000 });
       }
-      await page.waitForTimeout(2000);
     } else {
       logConsole(`⚠️ No se encontró botón "Iniciar" — reintentando...`, runId);
       await page.waitForTimeout(3000);
       const retry = await page.$('input[value="Iniciar"], button:has-text("Iniciar")');
       if (retry) {
         const form = await retry.evaluateHandle(el => el.closest('form'));
-        if (form) await form.evaluate(f => f.submit());
-        else await retry.click({ force: true });
+        if (form) {
+          logConsole(`🚀 Reintentando submit real`, runId);
+          await Promise.all([
+            form.evaluate(f => f.submit()),
+            page.waitForNavigation({ waitUntil: "load", timeout: 180000 })
+          ]);
+        } else {
+          await retry.click({ force: true });
+          await page.waitForNavigation({ waitUntil: "load", timeout: 180000 });
+        }
         logConsole(`✅ Click en botón "Iniciar" tras reintento`, runId);
       } else {
         logConsole(`❌ No se detectó botón "Iniciar" en ningún modo`, runId);
       }
     }
 
-    // 4️⃣ Esperar redirección real (procesamiento)
-    try {
-      await page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 180000 });
-      logConsole(`↩️ Redirección detectada correctamente a la tabla principal.`, runId);
-    } catch {
-      const base = page.url().split("/ProcesoCierre")[0];
-      const destino = `${base}/ProcesoCierre/Procesar`;
-      logConsole(`🔁 Redirección no detectada — forzando navegación a ${destino}`, runId);
-      await page.goto(destino, { waitUntil: "load", timeout: 120000 });
-    }
+    // 4️⃣ Esperar carga completa de la tabla principal (garantizado)
+    const base = page.url().split("/ProcesoCierre")[0];
+    const destino = `${base}/ProcesoCierre/Procesar`;
 
-    await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
-    logConsole(`✅ Tabla principal cargada nuevamente.`, runId);
+    try {
+      await page.waitForSelector("#myTable tbody tr", { timeout: 60000 });
+      logConsole(`✅ Tabla principal cargada nuevamente.`, runId);
+    } catch {
+      logConsole(`⚠️ Tabla no visible aún — forzando navegación a ${destino}`, runId);
+      await page.goto(destino, { waitUntil: "load", timeout: 180000 });
+      await page.waitForSelector("#myTable tbody tr", { timeout: 60000 });
+      logConsole(`✅ Tabla principal cargada tras forzar navegación.`, runId);
+    }
   } catch (err) {
     logConsole(`⚠️ completarEjecucionManual (error): ${err.message}`, runId);
   }
 }
-
 
 
 
