@@ -666,6 +666,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
     return null;
   }
 
+  // --- Lee el badge de estado en la fila exacta ---
   async function leerEstadoExacto(page, sistema, descripcion) {
     const fila = await getFilaExacta(page, sistema, descripcion);
     if (!fila) return "DESCONOCIDO";
@@ -677,6 +678,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       return "DESCONOCIDO";
     }
   }
+
 
   // ============================================================
   // 📆 Detección de “fecha mayor” (solo F4)
