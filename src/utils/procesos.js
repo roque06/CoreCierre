@@ -112,7 +112,7 @@ async function ejecutarPreScripts(descripcion, baseDatos, runId = "GLOBAL") {
 // ============================================================
 // ⏳ EsperarCompletado — monitorea hasta que cambie a Completado/Error
 // ============================================================
-async function esperarCompletado(page, descripcion, runId = "GLOBAL") {
+async function esperarHastaCompletado(page, descripcion, runId = "GLOBAL") {
   const inicio = Date.now();
   let estadoPrevio = "";
   const maxMin = 15; // tiempo máximo de espera
