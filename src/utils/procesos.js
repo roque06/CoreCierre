@@ -827,87 +827,93 @@ async function completarEjecucionManual(page, runId = "GLOBAL") {
   try {
     await page.waitForTimeout(1000);
 
-    // 1️⃣ Click en botón "Procesar Directo"
+    // 1️⃣ Click en "Procesar Directo"
     const btnProcesar = page.locator('button:has-text("Procesar Directo"), input[value="Procesar Directo"]');
     if (await btnProcesar.first().isVisible().catch(() => false)) {
       await btnProcesar.first().click({ force: true });
       logConsole(`✅ Click en botón superior "Procesar Directo"`, runId);
-      await page.waitForTimeout(1500);
+    } else {
+      logConsole(`⚠️ Botón "Procesar Directo" no visible`, runId);
     }
 
-    // 2️⃣ Buscar el botón "Iniciar" (puede estar en modal o en DOM principal)
+    // 2️⃣ Esperar aparición real del modal
+    let modalDetectado = null;
+    for (const selector of ["#myModal", "#myModalAdd", ".modal.show"]) {
+      try {
+        modalDetectado = await page.waitForSelector(selector, { timeout: 8000 });
+        if (modalDetectado) {
+          logConsole(`🧩 Modal detectado (${selector})`, runId);
+          break;
+        }
+      } catch { }
+    }
+
+    // 3️⃣ Intentar detectar el botón “Iniciar” visible
     const posiblesSelectores = [
-      'input[type="submit"][value="Iniciar"]',
-      'button:has-text("Iniciar")',
       '#myModal input[type="submit"][value="Iniciar"]',
       '#myModalAdd input[type="submit"][value="Iniciar"]',
-      'form[action*="ProcesarDirecto"] input[type="submit"]'
+      'input[type="submit"][value="Iniciar"]',
+      'button:has-text("Iniciar")'
     ];
 
     let btnIniciar = null;
-    for (const selector of posiblesSelectores) {
-      btnIniciar = await page.$(selector);
+    for (const sel of posiblesSelectores) {
+      btnIniciar = await page.$(sel);
       if (btnIniciar) {
-        logConsole(`🧩 Botón "Iniciar" detectado con selector: ${selector}`, runId);
+        logConsole(`🧩 Botón "Iniciar" detectado con selector: ${sel}`, runId);
         break;
       }
     }
 
     const startTime = Date.now();
 
-    // 3️⃣ Intentar enviar el formulario o click directo
+    // 4️⃣ Intentar hacer click visible
     if (btnIniciar) {
       try {
-        const form = await btnIniciar.evaluateHandle(el => el.closest('form'));
-        if (form) {
-          logConsole(`🚀 Enviando formulario principal (submit real)`, runId);
-          await Promise.all([
-            form.evaluate(f => f.submit()),
-            page.waitForNavigation({ waitUntil: "load", timeout: 60000 })
-          ]);
-        } else {
-          await btnIniciar.click({ force: true });
-          logConsole(`✅ Click en botón "Iniciar"`, runId);
-          await page.waitForNavigation({ waitUntil: "load", timeout: 60000 });
-        }
+        await btnIniciar.scrollIntoViewIfNeeded();
+        await btnIniciar.waitForElementState("visible", { timeout: 5000 });
+        await btnIniciar.click({ force: true });
+        logConsole(`✅ Click visible en botón "Iniciar"`, runId);
       } catch (e) {
-        logConsole(`⚠️ Primer intento falló (${e.message}) — reintentando...`, runId);
+        logConsole(`⚠️ Click visible falló (${e.message}) — usando click DOM directo`, runId);
+        await page.evaluate((el) => el.click(), btnIniciar);
+        logConsole(`✅ Click forzado vía DOM en botón "Iniciar"`, runId);
       }
-    }
+    } else {
+      logConsole(`⚠️ No se detectó botón "Iniciar" — intentando recargar modal`, runId);
 
-    // 4️⃣ Detectar si la página se recargó muy rápido (modal no alcanzó a ejecutar)
-    if (Date.now() - startTime < 3000) {
-      logConsole(`⚠️ Detección de recarga rápida — posible pérdida del modal. Reintentando click en "Iniciar"...`, runId);
-
-      // Reabrir la página del proceso directamente
+      // Reabrir la pantalla directa si el modal se perdió
       const currentUrl = page.url();
-      if (currentUrl.includes("ProcesarDirecto") === false) {
-        const reUrl = currentUrl.replace("/ProcesoCierre/Procesar", "/ProcesoCierre/ProcesarDirecto?CodSistema=F4&CodProceso=16");
-        await page.goto(reUrl, { waitUntil: "load", timeout: 60000 });
-        await page.waitForTimeout(3000);
-      }
+      const reUrl = `${currentUrl.split("/ProcesoCierre")[0]}/ProcesoCierre/ProcesarDirecto?CodSistema=F4&CodProceso=16`;
+      await page.goto(reUrl, { waitUntil: "load", timeout: 60000 });
+      await page.waitForTimeout(4000);
 
-      // Reintentar click
-      for (const selector of posiblesSelectores) {
-        btnIniciar = await page.$(selector);
-        if (btnIniciar) {
-          await btnIniciar.click({ force: true });
-          logConsole(`✅ Reintento exitoso en botón "Iniciar"`, runId);
+      for (const sel of posiblesSelectores) {
+        const retryBtn = await page.$(sel);
+        if (retryBtn) {
+          await page.evaluate((el) => el.click(), retryBtn);
+          logConsole(`✅ Click en botón "Iniciar" tras reintento en ${sel}`, runId);
           break;
         }
       }
     }
 
-    // 5️⃣ Esperar redirección final a la tabla principal
-    const base = page.url().split("/ProcesoCierre")[0];
-    const destino = `${base}/ProcesoCierre/Procesar`;
-    await page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 90000 }).catch(async () => {
-      logConsole(`🔁 Forzando navegación a la tabla principal`, runId);
-      await page.goto(destino, { waitUntil: "load", timeout: 90000 });
-    });
+    // 5️⃣ Esperar que el backend procese y redireccione
+    try {
+      await page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 90000 });
+      logConsole(`↩️ Redirección detectada correctamente a la tabla principal.`, runId);
+    } catch {
+      const base = page.url().split("/ProcesoCierre")[0];
+      const destino = `${base}/ProcesoCierre/Procesar`;
+      logConsole(`🔁 Redirección no detectada — navegando manualmente a ${destino}`, runId);
+      await page.goto(destino, { waitUntil: "load", timeout: 120000 });
+    }
 
-    await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
+    await page.waitForSelector("#myTable tbody tr", { timeout: 40000 });
     logConsole(`✅ Tabla principal cargada nuevamente.`, runId);
+
+    // 🕒 Espera breve antes de monitorear estado (Oracle puede tardar en reflejarlo)
+    await page.waitForTimeout(5000);
   } catch (err) {
     logConsole(`⚠️ completarEjecucionManual (error): ${err.message}`, runId);
   }
