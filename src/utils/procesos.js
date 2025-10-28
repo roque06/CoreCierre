@@ -663,7 +663,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         logConsole(`❌ ${descripcion} finalizó con error.`, runId);
 
         try {
-          // 🔍 Consultar job asociado (solo F4 tiene monitoreo de Oracle)
+          // 🔍 Verificar si existe job activo en Oracle
           const hayJob = typeof monitorearF4Job === "function"
             ? await monitorearF4Job(connectString, baseDatos, runId)
             : false;
@@ -671,12 +671,11 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           if (hayJob) {
             logConsole(`🟡 Job Oracle activo detectado — esperando que finalice...`, runId);
 
-            // Esperar que el job termine (modo bloqueante)
+            // Esperar su finalización
             await monitorearF4Job(connectString, baseDatos, runId, true);
-
             logConsole(`✅ Job Oracle finalizado correctamente.`, runId);
 
-            // Ejecutar actualización correctiva (pone el proceso en 'T')
+            // Actualizar proceso a ESTATUS='T'
             try {
               const sql = `
           UPDATE PA.PA_BITACORA_PROCESO_CIERRE
@@ -702,12 +701,25 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
             }
 
           } else {
+            // No hay job → no repetir ejecución, marcar y continuar
             logConsole(`ℹ️ No se detectó job Oracle activo para ${descripcion} — continúa flujo normal.`, runId);
+            procesosEjecutadosGlobal.set(claveEjec, true);
+            logConsole(`🔁 Proceso ${descripcion} en ERROR será omitido en próximos ciclos.`, runId);
           }
         } catch (e) {
           logConsole(`⚠️ Error monitoreando job Oracle: ${e.message}`, runId);
+          procesosEjecutadosGlobal.set(claveEjec, true);
+          logConsole(`🔁 Proceso ${descripcion} marcado como tratado tras error de monitoreo.`, runId);
         }
+
+        // Refrescar tabla y continuar
+        await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
+        await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
+        filas = await page.$$("#myTable tbody tr");
+        i = -1;
+        continue;
       }
+
 
 
       if (estadoFinal === "COMPLETADO") {
