@@ -556,7 +556,7 @@ async function completarEjecucionManual(page, runId = "GLOBAL") {
 
 
 // ============================================================
-// ▶️ Ejecutar proceso (espera indefinida + control de jobs + UPDATE preciso)
+// ▶️ Ejecutar proceso (espera indefinida + pre-scripts + control de jobs + UPDATE preciso)
 // ============================================================
 async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = "GLOBAL") {
   await page.waitForSelector("#myTable tbody tr");
@@ -603,6 +603,16 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
       logConsole(`▶️ [${sistema}] ${descripcion} (${estado}) — Fecha=${fechaTxt}`, runId);
 
+      // =============================== ⚙️ Pre-Scripts configurados ===============================
+      if (typeof ejecutarPreScripts === "function") {
+        try {
+          await ejecutarPreScripts(descripcion, baseDatos, runId);
+          logConsole(`✅ Pre-script(s) ejecutado(s) correctamente para ${descripcion}`, runId);
+        } catch (preErr) {
+          logConsole(`⚠️ Error ejecutando pre-script(s) de ${descripcion}: ${preErr.message}`, runId);
+        }
+      }
+
       // =============================== 🧠 F4 Fecha Mayor ===============================
       if (sistema.toUpperCase() === "F4" && typeof ejecutarF4FechaMayor === "function") {
         const filasAct = await page.$$("#myTable tbody tr");
@@ -642,7 +652,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           logConsole("✅ Click en botón azul 'Procesar Directo'.", runId);
         }
 
-        // 🔄 Evita “Element is not visible” y clics dobles
         await completarEjecucionManual(page, runId);
 
       } catch (e) {
@@ -670,7 +679,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           logConsole(`📄 ${descripcion}: estado actual = DESCONOCIDO`, runId);
         }
 
-        // Refrescar tabla cada ~60s para evitar stale DOM
         if (ciclos % 30 === 29) {
           logConsole(`⏳ Esperando ${descripcion} — refrescando tabla...`, runId);
           await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
@@ -691,14 +699,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
           if (hayJob) {
             logConsole(`🟡 Job Oracle activo detectado — esperando que finalice...`, runId);
-
-            // Esperar finalización completa de TODOS los jobs relacionados
             await monitorearF4Job(connectString, baseDatos, runId, true);
             logConsole(`✅ Todos los jobs Oracle finalizaron correctamente.`, runId);
 
-            // =====================================================
-            // 🩹 UPDATE preciso por COD_SISTEMA + COD_PROCESO
-            // =====================================================
             try {
               const link = await fila.$("a[href*='CodProceso']");
               const href = (await link?.getAttribute("href")) || "";
@@ -729,7 +732,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
             }
 
           } else {
-            // ❌ Sin job activo → no reintentar. Marcar como tratado y seguir.
             logConsole(`ℹ️ No se detectó job Oracle activo para ${descripcion} — continúa flujo normal.`, runId);
             procesosEjecutadosGlobal.set(claveEjec, true);
             logConsole(`🔁 Proceso ${descripcion} en ERROR será omitido en próximos ciclos.`, runId);
@@ -741,7 +743,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           logConsole(`🔁 Proceso ${descripcion} marcado como tratado tras error de monitoreo.`, runId);
         }
 
-        // 🔄 Refrescar tabla y continuar con el siguiente proceso del sistema
         await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
         await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
         filas = await page.$$("#myTable tbody tr");
@@ -755,7 +756,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         logConsole(`✅ ${descripcion} marcado COMPLETADO.`, runId);
       }
 
-      // 🔄 Refrescar tabla segura (nuevo contexto)
       await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
       await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
       filas = await page.$$("#myTable tbody tr");
@@ -773,7 +773,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   return "Completado";
 }
-
 
 
 
