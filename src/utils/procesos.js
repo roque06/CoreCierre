@@ -523,6 +523,7 @@ function cargarFechaF4Persistente(descripcion) {
 }
 
 
+
 async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = "GLOBAL") {
   const { esperarEstadoTabla } = require("./navegacion.js");
   await page.waitForSelector("#myTable tbody tr");
@@ -566,7 +567,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         const fechaStr = (await f.$eval("td:nth-child(7)", el => el.innerText.trim())) || "";
         const val = parseFecha(fechaStr);
         if (val) fechasF4.push(val);
-      } catch { }
+      } catch {}
     }
 
     if (fechasF4.length === 0) return false;
@@ -645,41 +646,62 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
             continue;
           }
 
-          // Esperar modal y click en "Iniciar" + respuesta backend
-          const btnIniciar = await page.waitForSelector('//*[@id="myModal"]/div/div/form/div[2]/input', { timeout: 20000 }).catch(() => null);
-          if (btnIniciar) {
-            await btnIniciar.scrollIntoViewIfNeeded();
-            logConsole(`✅ Modal visible, listo para clic en "Iniciar"`, runId);
+          // ============================================================
+          // 🧠 Modal con auto-redirección o clic manual (QA7 tolerante)
+          // ============================================================
+          let redireccionDetectada = false;
 
-            const [response] = await Promise.all([
-              page.waitForResponse(res =>
-                res.url().includes("ProcesarDirecto") || res.url().includes("Procesar"),
-                { timeout: 120000 }
-              ).catch(() => null),
-              btnIniciar.click({ force: true })
-            ]);
+          try {
+            const modalPromise = page.waitForSelector('#myModal', { state: 'visible', timeout: 8000 }).catch(() => null);
+            const redirPromise = page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 8000 }).then(() => true).catch(() => false);
 
-            if (response && response.ok()) {
-              logConsole(`✅ Backend confirmó ejecución de "${descripcion}" (${response.status()})`, runId);
+            const modalVisible = await modalPromise;
+            redireccionDetectada = await redirPromise;
+
+            if (redireccionDetectada) {
+              logConsole(`⚙️ El sistema redirigió automáticamente antes del clic en "Iniciar"`, runId);
+            } else if (modalVisible) {
+              logConsole(`✅ Modal visible — ejecución manual requerida`, runId);
+              const btnIniciar = await page.$('//*[@id="myModal"]/div/div/form/div[2]/input');
+              if (btnIniciar) {
+                await btnIniciar.scrollIntoViewIfNeeded();
+                await Promise.all([
+                  page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 120000 }),
+                  btnIniciar.click({ force: true }),
+                ]);
+                logConsole(`✅ Click manual en botón "Iniciar" ejecutado`, runId);
+                redireccionDetectada = true;
+              } else {
+                logConsole(`⚠️ Modal detectado pero no se encontró botón "Iniciar"`, runId);
+              }
             } else {
-              logConsole(`⚠️ No se detectó respuesta HTTP del backend para "${descripcion}" — posible retraso.`, runId);
+              logConsole(`⚠️ Ni modal ni redirección detectados — comportamiento inesperado`, runId);
             }
+          } catch (err) {
+            logConsole(`⚠️ Error durante manejo del modal: ${err.message}`, runId);
+          }
 
-            // Esperar redirección automática
+          // ============================================================
+          // 🔁 Si hubo redirección, verificar estado DOM real
+          // ============================================================
+          if (redireccionDetectada) {
             try {
-              await page.waitForURL(/ProcesoCierre\/Procesar$/, { timeout: 120000 });
-              await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
-              logConsole(`✅ Redirección automática detectada — tabla principal cargada.`, runId);
-            } catch {
-              logConsole(`⚠️ Redirección no detectada — el backend podría estar tardando.`, runId);
-            }
+              await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
+              logConsole(`✅ Tabla principal recargada tras ejecución.`, runId);
 
-            // Leer estado real
-            const estadoReal = await esperarEstadoTabla(page, descripcion);
-            logConsole(`📌 Estado DOM real de "${descripcion}": ${estadoReal}`, runId);
-          } else {
-            logConsole(`❌ No se encontró el botón "Iniciar" en el modal`, runId);
-            continue;
+              // Lectura real y segura del estado
+              const estadoReal = await esperarEstadoTabla(page, descripcion);
+              const estadoNorm = (estadoReal || "").trim().toUpperCase();
+              if (["PENDIENTE", "", "EN PROCESO"].includes(estadoNorm)) {
+                logConsole(`📌 Estado DOM real de "${descripcion}": ${estadoNorm || "PENDIENTE"}`, runId);
+              } else if (estadoNorm === "COMPLETADO") {
+                logConsole(`📌 Estado DOM real de "${descripcion}": COMPLETADO`, runId);
+              } else {
+                logConsole(`📌 Estado DOM no reconocido ("${estadoReal}") — se marca como PENDIENTE`, runId);
+              }
+            } catch (e) {
+              logConsole(`⚠️ Error leyendo estado tras redirección: ${e.message}`, runId);
+            }
           }
         } else {
           logConsole(`⚠️ No se encontró botón "Procesar Directo" en la tabla para ${descripcion}`, runId);
@@ -739,7 +761,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   return "Completado";
 }
-
 
 // =============================================================
 // 🔄 Ejecutar proceso por URL directa
