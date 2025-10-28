@@ -109,53 +109,42 @@ async function ejecutarPreScripts(descripcion, baseDatos, runId = "GLOBAL") {
   }
 }
 
-// =============================================================
-// 🕒 Esperar hasta completado (robusta y con timeout)
-// =============================================================
-// ⏳ Esperar hasta que un proceso termine (Completado / Error)
-// =============================================================
-async function esperarHastaCompletado(page, codSistema, codProceso, descripcion, claveProceso, runId = "GLOBAL") {
-  const nombreProc = descripcion || claveProceso;
-  logConsole(`⏳ Monitoreando estado de "${nombreProc}" hasta completado...`, runId);
-
+// ============================================================
+// ⏳ EsperarCompletado — monitorea hasta que cambie a Completado/Error
+// ============================================================
+async function esperarCompletado(page, descripcion, runId = "GLOBAL") {
   const inicio = Date.now();
-  let estadoAnterior = "";
+  let estadoPrevio = "";
+  const maxMin = 15; // tiempo máximo de espera
+  logConsole(`⏳ Esperando que "${descripcion}" cambie de estado...`, runId);
 
   while (true) {
-    await page.waitForTimeout(10000); // 🔁 revisar cada 10s
-
-    let estado = "DESCONOCIDO";
     try {
       const filaLocator = page.locator("#myTable tbody tr", { hasText: descripcion });
       const badgeLocator = filaLocator.locator("td .badge").first();
-      estado = ((await badgeLocator.innerText()) || "").trim().toUpperCase();
+      const estadoActual = ((await badgeLocator.innerText()) || "").trim().toUpperCase();
+
+      if (estadoActual !== estadoPrevio) {
+        estadoPrevio = estadoActual;
+        logConsole(`📊 ${descripcion}: ${estadoActual}`, runId);
+      }
+
+      if (["COMPLETADO", "ERROR"].includes(estadoActual)) {
+        const dur = ((Date.now() - inicio) / 60000).toFixed(2);
+        logConsole(`✅ ${descripcion}: ${estadoActual} tras ${dur} min`, runId);
+        return estadoActual;
+      }
+
+      const elapsed = (Date.now() - inicio) / 60000;
+      if (elapsed >= maxMin) {
+        logConsole(`⚠️ Timeout esperando "${descripcion}" (15 min). Último estado: ${estadoPrevio}`, runId);
+        return estadoPrevio;
+      }
     } catch (err) {
-      logConsole(`⚠️ Error leyendo estado de "${nombreProc}": ${err.message}`, runId);
-      estado = "DESCONOCIDO";
+      logConsole(`⚠️ Error leyendo estado de "${descripcion}": ${err.message}`, runId);
     }
 
-    // 🔄 Si hay cambio de estado, lo registramos
-    if (estado !== estadoAnterior) {
-      estadoAnterior = estado;
-      logConsole(`📊 ${nombreProc}. ${estado}`, runId);
-    }
-
-    // 📈 Evaluar estado
-    if (estado.includes("EN PROCESO") || estado === "DESCONOCIDO") {
-      continue; // sigue esperando indefinidamente
-    }
-
-    if (estado.includes("COMPLETADO")) {
-      const minutos = ((Date.now() - inicio) / 60000).toFixed(2);
-      logConsole(`✅ ${nombreProc}. Completado en ${minutos} minutos`, runId);
-      return "Completado";
-    }
-
-    if (estado.includes("ERROR")) {
-      const minutos = ((Date.now() - inicio) / 60000).toFixed(2);
-      logConsole(`❌ ${nombreProc}. Finalizó con error en ${minutos} minutos`, runId);
-      return "Error";
-    }
+    await page.waitForTimeout(8000);
   }
 }
 
