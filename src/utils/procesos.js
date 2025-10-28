@@ -558,6 +558,9 @@ async function completarEjecucionManual(page, runId = "GLOBAL") {
 // ============================================================
 // ▶️ Ejecutar proceso (versión final adaptada con control de jobs y UPDATE preciso)
 // ============================================================
+// ============================================================
+// ▶️ Ejecutar proceso (espera indefinida + control de jobs + UPDATE preciso)
+// ============================================================
 async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = "GLOBAL") {
   await page.waitForSelector("#myTable tbody tr");
   logConsole(`▶️ Analizando sistema ${sistema}...`, runId);
@@ -649,19 +652,38 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         logConsole(`⚠️ No se detectó modal: ${e.message}`, runId);
       }
 
-      // =============================== 📊 Estado final ===============================
-      let estadoFinal = "DESCONOCIDO";
-      for (let intento = 0; intento < 60; intento++) {
-        await page.waitForTimeout(1000);
+      // =============================== 🕒 Espera INDEFINIDA del estado ===============================
+      let estadoFinal = null;
+      let ciclos = 0;
+
+      while (true) {
+        await page.waitForTimeout(2000);
+
         const nuevo = await leerEstadoExacto(page, sistema, descripcion);
-        if (["EN PROCESO", "COMPLETADO", "ERROR"].includes(nuevo)) {
-          estadoFinal = nuevo;
-          logConsole(`📊 ${descripcion}: ${estado} → ${nuevo}`, runId);
-          break;
+        if (nuevo) {
+          if (nuevo !== estado && ciclos % 5 === 0) {
+            logConsole(`📄 ${descripcion}: estado actual = ${nuevo}`, runId);
+          }
+          if (nuevo === "COMPLETADO" || nuevo === "ERROR") {
+            estadoFinal = nuevo;
+            logConsole(`📊 ${descripcion}: ${estado} → ${estadoFinal}`, runId);
+            break;
+          }
+        } else if (ciclos % 5 === 0) {
+          logConsole(`📄 ${descripcion}: estado actual = DESCONOCIDO`, runId);
         }
+
+        // Refrescar tabla cada ~60s para evitar stale DOM
+        if (ciclos % 30 === 29) {
+          logConsole(`⏳ Esperando ${descripcion} — refrescando tabla...`, runId);
+          await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
+          await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
+        }
+
+        ciclos++;
       }
 
-      // =============================== ⚠️ Manejo de error con job ===============================
+      // =============================== ⚠️ Manejo de ERROR con job ===============================
       if (estadoFinal === "ERROR") {
         logConsole(`❌ ${descripcion} finalizó con error.`, runId);
 
@@ -673,12 +695,12 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           if (hayJob) {
             logConsole(`🟡 Job Oracle activo detectado — esperando que finalice...`, runId);
 
-            // Esperar finalización completa
+            // Esperar finalización completa de TODOS los jobs relacionados
             await monitorearF4Job(connectString, baseDatos, runId, true);
             logConsole(`✅ Todos los jobs Oracle finalizaron correctamente.`, runId);
 
             // =====================================================
-            // 🩹 Actualización precisa por COD_SISTEMA + COD_PROCESO
+            // 🩹 UPDATE preciso por COD_SISTEMA + COD_PROCESO
             // =====================================================
             try {
               const link = await fila.$("a[href*='CodProceso']");
@@ -710,7 +732,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
             }
 
           } else {
-            // ❌ Sin job activo: marcar como tratado y continuar
+            // ❌ Sin job activo → no reintentar. Marcar como tratado y seguir.
             logConsole(`ℹ️ No se detectó job Oracle activo para ${descripcion} — continúa flujo normal.`, runId);
             procesosEjecutadosGlobal.set(claveEjec, true);
             logConsole(`🔁 Proceso ${descripcion} en ERROR será omitido en próximos ciclos.`, runId);
@@ -722,7 +744,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           logConsole(`🔁 Proceso ${descripcion} marcado como tratado tras error de monitoreo.`, runId);
         }
 
-        // 🔄 Refrescar tabla antes de continuar
+        // 🔄 Refrescar tabla y continuar con el siguiente proceso del sistema
         await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
         await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
         filas = await page.$$("#myTable tbody tr");
@@ -741,6 +763,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
       filas = await page.$$("#myTable tbody tr");
       i = -1;
+
     } catch (err) {
       logConsole(`⚠️ Error inesperado: ${err.message}`, runId);
       await page.waitForTimeout(3000);
