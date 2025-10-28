@@ -645,62 +645,29 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         logConsole(`✅ Click en botón "Procesar Directo" (XPath //*[@id="myModalAdd"])`, runId);
 
         // ------------------------------------------------------------
-        // Paso 3️⃣ — Esperar modal y hacer clic en "Iniciar" (tolerante)
+        // Paso 3️⃣ — Esperar modal y hacer clic en "Iniciar" (modo natural QA7)
         // ------------------------------------------------------------
-        logConsole(`⚙️ Esperando modal o redirección automática...`, runId);
+        logConsole(`⚙️ Esperando apertura del modal de ejecución...`, runId);
 
-        const [evento] = await Promise.race([
-          Promise.all([
-            page.waitForSelector('#myModal', { state: 'visible', timeout: 5000 })
-              .then(() => 'MODAL'),
-          ]),
-          page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 8000 })
-            .then(() => 'REDIRECCION')
-            .catch(() => null),
-        ]);
+        // Esperar que el modal aparezca
+        await page.waitForSelector('#myModal', { state: 'visible', timeout: 15000 });
+        logConsole(`✅ Modal visible — listo para ejecutar clic en "Iniciar"`, runId);
 
-        if (evento === 'MODAL') {
-          logConsole(`✅ Modal visible — intento de clic manual en "Iniciar"`, runId);
-          const btnIniciar = await page.$('//*[@id="myModal"]/div/div/form/div[2]/input');
-          if (btnIniciar) {
-            try {
-              await Promise.all([
-                page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 120000 }),
-                btnIniciar.click({ force: true }),
-              ]);
-              logConsole(`✅ Click en botón "Iniciar" ejecutado correctamente`, runId);
-            } catch (err) {
-              logConsole(`⚠️ No se pudo hacer clic en "Iniciar" (posible redirección rápida): ${err.message}`, runId);
-            }
-          } else {
-            logConsole(`⚠️ Modal visible pero sin botón "Iniciar"`, runId);
+        // Buscar el botón "Iniciar" dentro del modal
+        const btnIniciar = await page.$('//*[@id="myModal"]/div/div/form/div[2]/input');
+
+        if (btnIniciar) {
+          try {
+            await btnIniciar.scrollIntoViewIfNeeded();
+            await page.waitForTimeout(800); // pequeño delay para estabilidad
+            await btnIniciar.click({ force: true });
+            logConsole(`✅ Click en botón "Iniciar" ejecutado correctamente`, runId);
+          } catch (err) {
+            logConsole(`❌ Error al intentar hacer clic en "Iniciar": ${err.message}`, runId);
           }
-        } else if (evento === 'REDIRECCION') {
-          logConsole(`⚙️ Redirección automática detectada antes del clic en "Iniciar"`, runId);
         } else {
-          logConsole(`⚠️ Ni modal ni redirección detectados — comportamiento inesperado`, runId);
+          logConsole(`⚠️ No se encontró el botón "Iniciar" dentro del modal`, runId);
         }
-
-        // ------------------------------------------------------------
-        // Paso 4️⃣ — Confirmar tabla principal y leer estado real
-        // ------------------------------------------------------------
-        await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
-        logConsole(`✅ Tabla principal recargada tras ejecución.`, runId);
-
-        const estadoReal = await esperarEstadoTabla(page, descripcion);
-        const estadoNorm = (estadoReal || "").trim().toUpperCase();
-
-        if (["PENDIENTE", "", "EN PROCESO"].includes(estadoNorm)) {
-          logConsole(`📌 Estado DOM real de "${descripcion}": ${estadoNorm || "PENDIENTE"}`, runId);
-        } else if (estadoNorm === "COMPLETADO") {
-          logConsole(`📌 Estado DOM real de "${descripcion}": COMPLETADO`, runId);
-        } else {
-          logConsole(`📌 Estado DOM no reconocido ("${estadoReal}") — se marca como PENDIENTE`, runId);
-        }
-
-        procesosEjecutadosGlobal.set(descUpper, true);
-        continue;
-      }
 
       // ============================================================
       // 🧩 Procesos F4 normales
