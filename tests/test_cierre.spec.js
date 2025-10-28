@@ -12,7 +12,7 @@ const {
   ejecutarPorHref,
   procesosEjecutadosGlobal,
   esperarHastaCompletado,
-  ejecutarF4FechaMayor, // ✅ AGREGADO: función especial para F4
+  ejecutarF4FechaMayor, // ✅ función especial F4
 } = require("../src/utils/procesos.js");
 const { logConsole, logWeb } = require("../src/utils/logger.js");
 
@@ -51,6 +51,9 @@ function parseFechaDMY(fechaTxt) {
   return new Date(y, m - 1, d);
 }
 
+// ============================================================
+// ▶️ TEST PRINCIPAL DE CIERRE
+// ============================================================
 test(`[${runId}] Cierre con selección de sistemas`, async () => {
   test.setTimeout(0);
 
@@ -75,7 +78,16 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   await navegarConRetries(page, `${ambiente.replace(/\/$/, "")}/ProcesoCierre/Procesar`);
   let ultimoSistemaLogueado = null;
 
+  // ============================================================
+  // 🧩 Registrar los sistemas activos seleccionados (nuevo)
+  // ============================================================
+  global.__sistemasActivos = procesos.map(p => p.toUpperCase());
+  logConsole(`📄 Sistemas activos definidos: ${global.__sistemasActivos.join(", ")}`, runId);
+  logWeb(`📄 Sistemas activos definidos: ${global.__sistemasActivos.join(", ")}`, runId);
+
+  // ============================================================
   // 🔄 Bucle principal
+  // ============================================================
   while (true) {
     const filas = page.locator("tbody tr");
     const total = await filas.count();
@@ -116,7 +128,9 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
       ultimoSistemaLogueado = sistemaActivo;
     }
 
-    // --- Ejecutar procesos del sistema activo ---
+    // ============================================================
+    // ▶️ Ejecutar procesos del sistema activo
+    // ============================================================
     for (let i = 0; i < total; i++) {
       const fila = filas.nth(i);
       if (!(await fila.isVisible())) continue;
@@ -201,7 +215,9 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
     if (!encontrado) await page.waitForTimeout(3000);
   }
 
-  // --- 🧾 Resumen Final ---
+  // ============================================================
+  // 🧾 Resumen Final del Cierre
+  // ============================================================
   const duracionTotal = ((Date.now() - inicioCierre) / 60000).toFixed(2);
   const fechaEjecucion = new Date().toLocaleString("es-VE", {
     dateStyle: "full",
