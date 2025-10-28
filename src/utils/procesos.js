@@ -7,6 +7,8 @@ const { navegarConRetries, esperarCompletado } = require("./navegacion.js");
 const { monitorearF4Job } = require("./oracleUtils.js");
 const { logConsole, logWeb } = require("./logger.js");
 
+global.__sistemasActivos = global.__sistemasActivos || [];
+
 
 // 📁 Archivo de persistencia (recuerda última fecha F4 detectada)
 const cachePath = path.resolve(__dirname, "../cache/f4_last_date.json");
