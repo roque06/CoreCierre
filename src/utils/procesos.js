@@ -39,6 +39,56 @@ function normalizarTexto(texto) {
     .toUpperCase();
 }
 
+
+// ============================================================
+// 🧩 Normalizador y lectura exacta de filas/estados
+// ============================================================
+
+// Normaliza texto quitando tildes, espacios y mayúsculas
+function _norm(t) {
+  return (t || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+}
+
+// Busca la fila exacta por sistema y descripción
+async function getFilaExacta(page, sistema, descripcion) {
+  const sis = _norm(sistema);
+  const desc = _norm(descripcion);
+  const filas = await page.$$("#myTable tbody tr");
+
+  for (const f of filas) {
+    try {
+      const sisTxt = _norm(await f.$eval("td:nth-child(3)", el => el.innerText));
+      const descTxt = _norm(await f.$eval("td:nth-child(5)", el => el.innerText));
+      if (sisTxt === sis && descTxt.includes(desc)) return f;
+    } catch { }
+  }
+  return null;
+}
+
+// Lee el estado exacto de una fila (badge o columna 10)
+async function leerEstadoExacto(page, sistema, descripcion) {
+  const fila = await getFilaExacta(page, sistema, descripcion);
+  if (!fila) return "DESCONOCIDO";
+  try {
+    const badge = await fila.$("td .badge");
+    const txt = (await badge?.innerText()) || "";
+    return _norm(txt);
+  } catch {
+    try {
+      const estadoTxt = (await fila.$eval("td:nth-child(10)", el => el.innerText.trim())) || "";
+      return _norm(estadoTxt);
+    } catch {
+      return "DESCONOCIDO";
+    }
+  }
+}
+
+
 // =============================================================
 // 🧩 Ejecutar script SQL vía backend
 // =============================================================
