@@ -914,7 +914,7 @@ async function completarEjecucionManual(page, runId = "GLOBAL") {
 // ============================================================
 // 🧩 Esperar Correr Calendario F4 — sincronizado con el front
 // ============================================================
-async function procesosEjecutadosGlobal(page, baseDatos, connectString, runId = "GLOBAL") {
+async function completarEjecucionManual(page, baseDatos, connectString, runId = "GLOBAL") {
   const { monitorearF4Job } = require("./oracleUtils.js");
   const intervalo = 4000;
   const MAX_INTENTOS = 45; // ~3 minutos
