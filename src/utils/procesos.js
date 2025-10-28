@@ -162,7 +162,7 @@ async function ejecutarPreScripts(descripcion, baseDatos, runId = "GLOBAL") {
 }
 
 
-async function esperarCompletado(page, descripcion, runId = "GLOBAL") {
+async function esperarHastaCompletado(page, descripcion, runId = "GLOBAL") {
   const normalizar = (t) =>
     t.normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
