@@ -741,13 +741,14 @@ async function ejecutarPorHref(page, fullUrl, descripcion, baseDatos, runId = "G
 
 
 // ============================================================
-// 🧩 completarEjecucionManual — versión QA7 corregida y estable
+// ============================================================
+// 🧩 completarEjecucionManual — versión QA7 FINAL (AJAX-safe)
 // ============================================================
 async function completarEjecucionManual(page, runId = "GLOBAL") {
   try {
-    logConsole("⚙️ completarEjecucionManual (QA7 stable) — abriendo modal...", runId);
+    logConsole("⚙️ completarEjecucionManual (QA7 FINAL) — iniciando flujo modal...", runId);
 
-    // 1️⃣ Click en el botón superior "Procesar Directo"
+    // 1️⃣ Click en "Procesar Directo" superior
     const btnProcesar = page.locator(
       'button:has-text("Procesar Directo"), input[value="Procesar Directo"], #myModalAdd'
     );
@@ -756,55 +757,53 @@ async function completarEjecucionManual(page, runId = "GLOBAL") {
     await btnProcesar.first().click({ force: true });
     logConsole("✅ Click en botón superior 'Procesar Directo'", runId);
 
-    // 2️⃣ Esperar que el modal aparezca (visible)
+    // 2️⃣ Esperar modal visible
     const modal = page.locator("#myModal");
     await modal.waitFor({ state: "visible", timeout: 20000 });
     logConsole("📦 Modal visible", runId);
 
-    // 3️⃣ Localizar el botón “Iniciar” usando tu selector exacto
+    // 3️⃣ Localizar el botón "Iniciar" y esperar que esté habilitado
     const selectorIniciar = "#myModal > div > div > form > div.modal-footer > input";
     const btnIniciar = page.locator(selectorIniciar);
     await btnIniciar.waitFor({ state: "visible", timeout: 15000 });
     logConsole("✅ Botón 'Iniciar' localizado", runId);
 
-    // ✅ CORRECCIÓN: espera a que el botón esté habilitado (sin error de selector)
     await page.waitForFunction(
       (sel) => {
         const el = document.querySelector(sel);
         return el && !el.disabled && el.offsetParent !== null;
       },
-      selectorIniciar, // se pasa como string, NO como objeto
+      selectorIniciar,
       { timeout: 10000 }
     );
 
-    await btnIniciar.scrollIntoViewIfNeeded();
-    await page.waitForTimeout(300);
-
-    // 4️⃣ Click + espera simultánea de redirección NATURAL
-    logConsole("🖱️ Click real en 'Iniciar' (esperando redirección)...", runId);
+    // 4️⃣ Click real y esperar a que el modal desaparezca (indicador de AJAX)
+    logConsole("🖱️ Click real en 'Iniciar' (esperando cierre del modal)...", runId);
     await Promise.all([
-      page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 180000 }),
+      modal.waitFor({ state: "hidden", timeout: 120000 }),
       btnIniciar.click({ force: true, delay: 80 }),
     ]);
 
-    // 5️⃣ Confirmar tabla recargada
-    await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
-    await page.waitForTimeout(300);
-    logConsole("↩️ Redirección natural detectada y tabla principal cargada.", runId);
+    // 5️⃣ Esperar que el DOM de la tabla cambie (sin depender de URL)
+    logConsole("⏳ Esperando recarga o cambio de tabla principal (QA7 AJAX)...", runId);
+    await page.waitForSelector("#myTable tbody tr", { state: "attached", timeout: 90000 });
+    await page.waitForTimeout(1000);
+    logConsole("↩️ Tabla principal actualizada después de ejecución.", runId);
   } catch (err) {
-    logConsole(`⚠️ completarEjecucionManual error: ${err.message}`, runId);
+    logConsole(`⚠️ completarEjecucionManual (QA7 FINAL) error: ${err.message}`, runId);
 
-    // 🩹 Fallback: si no redirige, vuelve manualmente
+    // 🩹 Fallback en caso de recarga forzada
     try {
       const base = page.url().split("/ProcesoCierre")[0];
       await page.goto(`${base}/ProcesoCierre/Procesar`, { waitUntil: "load", timeout: 90000 });
-      await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
+      await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
       logConsole("✅ Recuperado con recarga manual", runId);
     } catch (e2) {
       logConsole(`❌ Fallback de navegación fallido: ${e2.message}`, runId);
     }
   }
 }
+
 
 
 
