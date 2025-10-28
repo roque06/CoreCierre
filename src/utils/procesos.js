@@ -127,6 +127,7 @@ const preScripts = {
   "CIERRE DIARIO CUENTA EFECTIVO": ["pre-f4.sql"],
   "CIERRE DIARIO CAJA (ATM)": ["cerrar_caja.sql"],
   "GENERAR ASIENTOS PESO IMPUESTOS MONEDA EXTRANJERA": ["cerrar_caja.sql"],
+  "GENERACION SALDOS CONTABILIZADOS": ["pre-f4.sql"],
 
   // 🔹 F5
   "CIERRE DIARIO DIVISAS": ["Fix_Cierre_Divisas.sql", "resetEstatusF5.sql"],
