@@ -528,8 +528,16 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   const procesosEjecutadosGlobal = global.procesosEjecutadosGlobal || new Map();
   global.procesosEjecutadosGlobal = procesosEjecutadosGlobal;
 
+  // ============================================================
+  // 🧩 Helpers locales
+  // ============================================================
   const normalizar = (t) =>
-    (t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toUpperCase();
+    (t || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toUpperCase();
 
   const parseFecha = (txt) => {
     if (!txt) return null;
@@ -543,6 +551,43 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   const buildClaveProceso = (sistema, descripcion, fechaTxt) =>
     `${normalizar(sistema)}|${normalizar(descripcion)}|${(fechaTxt || "").trim()}`;
 
+  // ============================================================
+  // 📆 Detección de “fecha mayor” (solo F4)
+  // ============================================================
+  async function esF4FechaMayor(descripcionActual, fechaTxt, filasActuales) {
+    const descNorm = normalizar(descripcionActual);
+    const actual = parseFecha(fechaTxt);
+    if (!actual) {
+      logConsole(`⚠️ [F4] ${descNorm}: sin fecha válida, se omite comparación.`, runId);
+      return false;
+    }
+
+    const fechasF4 = [];
+    for (const f of filasActuales) {
+      try {
+        const sis = (await f.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase())) || "";
+        if (sis !== "F4") continue;
+        const fechaStr = (await f.$eval("td:nth-child(7)", el => el.innerText.trim())) || "";
+        const val = parseFecha(fechaStr);
+        if (val) fechasF4.push(val);
+      } catch { }
+    }
+
+    if (fechasF4.length === 0) return false;
+    const fechaMayorGlobal = fechasF4.reduce((a, b) => (a > b ? a : b));
+    if (actual.getTime() === fechaMayorGlobal.getTime()) {
+      if (typeof guardarFechaF4Persistente === "function") {
+        guardarFechaF4Persistente(descNorm, fechaTxt);
+      }
+      logConsole(`📆 [F4] ${descNorm} tiene la FECHA MAYOR (${fechaTxt}) → ejecutar SQL.`, runId);
+      return true;
+    }
+    return false;
+  }
+
+  // ============================================================
+  // 🚀 Iterar procesos del sistema
+  // ============================================================
   let filas = await page.$$("#myTable tbody tr");
 
   for (let i = 0; i < filas.length; i++) {
@@ -561,14 +606,15 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
       logConsole(`▶️ [${sistema}] ${descripcion} (${estado}) — Fecha=${fechaTxt}`, runId);
 
-      // =============================== 🧠 F4 Fecha Mayor ===============================
-      if (sistema.toUpperCase() === "F4" && typeof ejecutarF4FechaMayor === "function") {
-        const filasAct = await page.$$("#myTable tbody tr");
-        const tieneMayor = await esF4FechaMayor(descripcion, fechaTxt, filasAct);
-        if (tieneMayor) {
+      // ========================================================
+      // 🧠 F4 con fecha mayor → ejecutar SQL
+      // ========================================================
+      if (sistema.toUpperCase() === "F4") {
+        const tieneMayor = await esF4FechaMayor(descripcion, fechaTxt, filas);
+        if (tieneMayor && typeof ejecutarF4FechaMayor === "function") {
           const resultado = await ejecutarF4FechaMayor(page, baseDatos, connectString, runId);
           if (resultado === "F4_COMPLETADO_MAYOR") {
-            logConsole(`✅ [F4] ${descripcion} completado vía SQL.`, runId);
+            logConsole(`✅ [F4] ${descripcion} completado vía SQL (fecha mayor).`, runId);
             await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
             await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
             filas = await page.$$("#myTable tbody tr");
@@ -577,92 +623,130 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         }
       }
 
-      // =============================== 🖱️ Click normal ===============================
+      // ========================================================
+      // 🖱️ Flujo normal — todos los procesos iguales
+      // ========================================================
+      if (typeof ejecutarPreScripts === "function") {
+        await ejecutarPreScripts(descripcion, baseDatos);
+      }
+
       const filaExacta = await getFilaExacta(page, sistema, descripcion);
-      if (!filaExacta) continue;
-      const botonProcesar = filaExacta.locator(
-        'a:has-text("Procesar Directo"), a[href*="Procesar"], a[onclick*="Procesar"]'
+      if (!filaExacta) {
+        logConsole(`⚠️ No se encontró la fila exacta para ${sistema} | ${descripcion}`, runId);
+        continue;
+      }
+
+      let botonProcesar = filaExacta.locator(
+        'a:has-text("Procesar Directo"), a:has-text("PROCESAR DIRECTO"), a[href*="Procesar"], a[onclick*="Procesar"]'
       ).first();
-      if (!(await botonProcesar.count())) continue;
+
+      if (!(await botonProcesar.count())) {
+        logConsole(`⚠️ No se encontró botón Procesar para "${descripcion}"`, runId);
+        continue;
+      }
 
       await botonProcesar.click({ force: true });
       logConsole(`🖱️ Click en "${descripcion}" (force)`, runId);
 
+      // ========================================================
+      // 🧩 Detección de pantalla manual / ProcesarDirecto
+      // ========================================================
       try {
         await Promise.race([
           page.waitForURL(/(EjecucionManual|ProcesarDirecto)/i, { timeout: 25000 }),
-          page.waitForSelector("#myModalAdd", { timeout: 25000 })
+          page.waitForSelector('#myModalAdd, input#myModalAdd', { timeout: 25000 })
         ]);
 
-        const btn = page.locator("#myModalAdd");
-        if (await btn.count()) {
-          await btn.click({ force: true });
-          logConsole("✅ Click en botón azul 'Procesar Directo'.", runId);
-        }
+        logConsole("📄 Pantalla de Ejecución Manual/ProcesarDirecto detectada.", runId);
+
+        let btnManual = page.locator('#myModalAdd');
+        if (!(await btnManual.count())) btnManual = page.locator('xpath=//*[@id="myModalAdd"]');
+        await btnManual.waitFor({ state: "visible", timeout: 10000 });
+        await btnManual.click({ force: true });
+        logConsole("✅ Click en botón azul 'Procesar Directo' ejecutado correctamente.", runId);
 
         const btnIniciar = page.locator('xpath=//*[@id="myModal"]/div/div/form/div[2]/input');
         if (await btnIniciar.count()) {
           await btnIniciar.click({ force: true });
-          logConsole("✅ Click en botón 'Iniciar' dentro del modal.", runId);
+          logConsole("✅ Click en botón 'Iniciar' dentro del modal ejecutado correctamente.", runId);
+        } else {
+          logConsole("ℹ️ No se detectó botón 'Iniciar' (puede ser ejecución directa).", runId);
         }
+
+        await page.waitForTimeout(3000);
       } catch (e) {
-        logConsole(`⚠️ No se detectó modal: ${e.message}`, runId);
+        logConsole(`⚠️ No se detectó pantalla manual ni botón azul 'Procesar Directo': ${e.message}`, runId);
       }
 
-      // =============================== 📊 Estado final ===============================
+      if (typeof completarEjecucionManual === "function") {
+        await completarEjecucionManual(page, sistema, descripcion, runId);
+      }
+
+      // ========================================================
+      // 📊 Espera robusta
+      // ========================================================
       let estadoFinal = "DESCONOCIDO";
       for (let intento = 0; intento < 60; intento++) {
         await page.waitForTimeout(1000);
         const nuevo = await leerEstadoExacto(page, sistema, descripcion);
         if (["EN PROCESO", "COMPLETADO", "ERROR"].includes(nuevo)) {
-          estadoFinal = nuevo;
           logConsole(`📊 ${descripcion}: ${estado} → ${nuevo}`, runId);
+          estadoFinal = nuevo;
           break;
         }
       }
 
+      // ========================================================
+      // ⚠️ Si hay error → monitorear job Oracle globalmente
+      // ========================================================
       if (estadoFinal === "ERROR") {
         logConsole(`❌ ${descripcion} finalizó con error.`, runId);
 
-        // 🔎 Monitorear job si hay error
-        try {
-          const hayJob = await monitorearF4Job(connectString, baseDatos, runId);
-          if (hayJob) {
-            logConsole("🟡 Job Oracle activo — esperando finalización...", runId);
-            await monitorearF4Job(connectString, baseDatos, runId, true);
-            logConsole("✅ Job Oracle finalizado, retomando flujo.", runId);
-          } else {
-            logConsole("ℹ️ No se detectaron jobs activos — continúa cierre.", runId);
+        if (typeof monitorearF4Job === "function") {
+          try {
+            logConsole(`⏳ Verificando si existe job Oracle activo o en cola...`, runId);
+            const jobActivo = await monitorearF4Job(connectString, baseDatos, pedirScript, runId);
+            if (jobActivo) {
+              logConsole(`🟡 Job Oracle detectado — esperando su finalización...`, runId);
+              await monitorearF4Job(connectString, baseDatos, pedirScript, runId, true);
+              logConsole(`✅ Job Oracle finalizado correctamente — reanudando flujo.`, runId);
+            } else {
+              logConsole(`ℹ️ No se detectaron jobs Oracle activos — continuará flujo.`, runId);
+            }
+          } catch (e) {
+            logConsole(`⚠️ Error al monitorear jobs Oracle: ${e.message}`, runId);
           }
-        } catch (e) {
-          logConsole(`⚠️ Error monitoreando job Oracle: ${e.message}`, runId);
+        } else {
+          logConsole(`⚠️ monitorearF4Job no está definido — no se pudo verificar jobs.`, runId);
         }
+
+        continue; // no bloquear el cierre
       }
 
       if (estadoFinal === "COMPLETADO") {
         procesosEjecutadosGlobal.set(claveEjec, true);
         logConsole(`✅ ${descripcion} marcado COMPLETADO.`, runId);
+      } else {
+        logConsole(`⚠️ ${descripcion} quedó en estado ${estadoFinal} — no se marca.`, runId);
       }
 
-      // 🔄 Refrescar tabla segura (nuevo contexto)
       await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
       await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
       filas = await page.$$("#myTable tbody tr");
       i = -1;
     } catch (err) {
-      logConsole(`⚠️ Error inesperado: ${err.message}`, runId);
-      await page.waitForTimeout(3000);
-      // 🔄 Refrescar contexto tras error
-      await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
-      await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
-      filas = await page.$$("#myTable tbody tr");
-      continue;
+      if (err.message?.includes("context") || err.message?.includes("Execution context")) {
+        logConsole(`⚠️ Error DOM/contexto (${err.message}) — ignorado.`, runId);
+        await page.waitForTimeout(8000);
+        continue;
+      } else {
+        logConsole(`⚠️ Error inesperado: ${err.message}`, runId);
+      }
     }
   }
 
   return "Completado";
 }
-
 
 
 
