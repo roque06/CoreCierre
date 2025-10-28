@@ -86,35 +86,6 @@ async function getFilaExacta(page, sistema, descripcion) {
 }
 
 
-// --- Localiza la fila exacta por Sistema + Descripción ---
-async function getFilaExacta(page, sistema, descripcion) {
-  const normalizar = (t) =>
-    (t || "")
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .toUpperCase();
-
-  const filas = page.locator("#myTable tbody tr");
-  const total = await filas.count();
-  const sisN = normalizar(sistema);
-  const descN = normalizar(descripcion);
-
-  for (let i = 0; i < total; i++) {
-    const fila = filas.nth(i);
-    const celdas = fila.locator("td");
-    if ((await celdas.count()) < 10) continue;
-
-    const sis = normalizar((await celdas.nth(2).innerText()).trim());
-    const desc = normalizar((await celdas.nth(4).innerText()).trim());
-
-    if (sis === sisN && desc.includes(descN)) {
-      return fila;
-    }
-  }
-  return null;
-}
 
 
 
