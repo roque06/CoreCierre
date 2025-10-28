@@ -524,6 +524,7 @@ function cargarFechaF4Persistente(descripcion) {
 
 
 async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = "GLOBAL") {
+  const { esperarEstadoTabla } = require("./navegacion.js");
   await page.waitForSelector("#myTable tbody tr");
   logConsole(`▶️ Analizando sistema ${sistema}...`, runId);
 
@@ -531,6 +532,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   global.procesosEjecutadosGlobal = procesosEjecutadosGlobal;
   const f4Procesados = new Set();
 
+  // ============================================================
+  // 🧩 Helper: parsear fechas
+  // ============================================================
   const parseFecha = (txt) => {
     if (!txt) return null;
     const clean = txt.replace(/[–\-\.]/g, "/").trim();
@@ -540,6 +544,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
     return isNaN(date.getTime()) ? null : date;
   };
 
+  // ============================================================
+  // 🧩 Determinar si F4 tiene fecha mayor
+  // ============================================================
   async function esF4FechaMayor(descripcionActual, fechaTxt, filasActuales, runId = "GLOBAL") {
     const normalize = (t) =>
       t.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -559,7 +566,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         const fechaStr = (await f.$eval("td:nth-child(7)", el => el.innerText.trim())) || "";
         const val = parseFecha(fechaStr);
         if (val) fechasF4.push(val);
-      } catch {}
+      } catch { }
     }
 
     if (fechasF4.length === 0) return false;
@@ -570,6 +577,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
     return actual.getTime() === fechaMayorGlobal.getTime();
   }
 
+  // ============================================================
+  // 🔁 Recorrer procesos
+  // ============================================================
   let filas = await page.$$("#myTable tbody tr");
 
   for (let i = 0; i < filas.length; i++) {
@@ -620,11 +630,11 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           await boton.first().click({ force: true });
           logConsole(`✅ Click inicial en "Procesar Directo"`, runId);
 
-          // Esperar que se cargue la página de ejecución manual
+          // Esperar pantalla ejecución manual
           await page.waitForSelector('text=Ejecución Manual de Proceso', { timeout: 20000 });
           logConsole(`📄 Pantalla "Ejecución Manual de Proceso" visible`, runId);
 
-          // Clic en el botón superior "Procesar Directo" (abre modal)
+          // Clic en botón superior "Procesar Directo" (abre modal)
           const btnProcesar = await page.$('//*[@id="myModalAdd"]');
           if (btnProcesar) {
             await btnProcesar.scrollIntoViewIfNeeded();
@@ -635,32 +645,42 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
             continue;
           }
 
-          // Esperar que el modal aparezca y hacer clic en "Iniciar"
+          // Esperar modal y click en "Iniciar" + respuesta backend
           const btnIniciar = await page.waitForSelector('//*[@id="myModal"]/div/div/form/div[2]/input', { timeout: 20000 }).catch(() => null);
           if (btnIniciar) {
             await btnIniciar.scrollIntoViewIfNeeded();
-            await btnIniciar.click({ force: true });
-            logConsole(`✅ Click en botón "Iniciar" (XPath //*[@id="myModal"]/div/div/form/div[2]/input)`, runId);
+            logConsole(`✅ Modal visible, listo para clic en "Iniciar"`, runId);
+
+            const [response] = await Promise.all([
+              page.waitForResponse(res =>
+                res.url().includes("ProcesarDirecto") || res.url().includes("Procesar"),
+                { timeout: 120000 }
+              ).catch(() => null),
+              btnIniciar.click({ force: true })
+            ]);
+
+            if (response && response.ok()) {
+              logConsole(`✅ Backend confirmó ejecución de "${descripcion}" (${response.status()})`, runId);
+            } else {
+              logConsole(`⚠️ No se detectó respuesta HTTP del backend para "${descripcion}" — posible retraso.`, runId);
+            }
+
+            // Esperar redirección automática
+            try {
+              await page.waitForURL(/ProcesoCierre\/Procesar$/, { timeout: 120000 });
+              await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
+              logConsole(`✅ Redirección automática detectada — tabla principal cargada.`, runId);
+            } catch {
+              logConsole(`⚠️ Redirección no detectada — el backend podría estar tardando.`, runId);
+            }
+
+            // Leer estado real
+            const estadoReal = await esperarEstadoTabla(page, descripcion);
+            logConsole(`📌 Estado DOM real de "${descripcion}": ${estadoReal}`, runId);
           } else {
             logConsole(`❌ No se encontró el botón "Iniciar" en el modal`, runId);
             continue;
           }
-
-          // Esperar la redirección a la tabla principal
-          try {
-            await page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 120000 });
-            await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
-            logConsole(`✅ Redirección detectada y tabla principal cargada nuevamente.`, runId);
-          } catch {
-            logConsole(`⚠️ Redirección no detectada — recargando manualmente`, runId);
-            const base = page.url().split("/ProcesoCierre")[0];
-            await navegarConRetries(page, `${base}/ProcesoCierre/Procesar`);
-          }
-
-          // Esperar confirmación visual del estado
-          const estadoFinal = await esperarEstadoTabla(page, descripcion);
-          logConsole(`📌 Estado DOM final de "${descripcion}": ${estadoFinal}`, runId);
-
         } else {
           logConsole(`⚠️ No se encontró botón "Procesar Directo" en la tabla para ${descripcion}`, runId);
         }
@@ -719,7 +739,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   return "Completado";
 }
-
 
 
 
