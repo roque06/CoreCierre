@@ -852,59 +852,63 @@ async function ejecutarPorHref(page, fullUrl, descripcion, baseDatos, runId = "G
 // =============================================================
 // 🧩 completarEjecucionManual (modo forzado DOM + fallback visible)
 // =============================================================
-async function completarEjecucionManual(page, runId = "GLOBAL") {
+// --- Confirma el modal si aparece y solo regresa a la tabla si arrancó ---
+async function completarEjecucionManual(page, sistema, descripcion, runId = "GLOBAL") {
+  logConsole(`🔎 Buscando modal de confirmación para: ${descripcion}...`, runId);
+
+  // 1) Modal (si aparece)
   try {
-    await page.waitForTimeout(800);
+    await page.waitForSelector(".modal-dialog", { state: "visible", timeout: 15000 });
+    const modal = page.locator(".modal-dialog");
 
-    // 1️⃣ Botón azul "Procesar Directo"
-    const btnProcesar = page.locator('button:has-text("Procesar Directo"), input[value="Procesar Directo"]');
-    if (await btnProcesar.first().isVisible().catch(() => false)) {
-      await btnProcesar.first().click({ force: true });
-      logConsole(`✅ Click en botón azul "Procesar Directo"`, runId);
-      await page.waitForTimeout(800);
+    await page.locator(".overlay, .loading, .spinner")
+      .waitFor({ state: "hidden", timeout: 5000 })
+      .catch(() => { });
+
+    const posibles = ["Iniciar", "INICIAR", "Aceptar", "ACEPTAR", "Ejecutar", "EJECUTAR", "Procesar"];
+    let boton = null;
+    for (const n of posibles) {
+      const cand = modal.getByRole("button", { name: n });
+      if (await cand.count()) { boton = cand; break; }
+    }
+    if (!boton) {
+      boton = modal.locator("button").filter({ hasText: /Iniciar|Aceptar|Ejecutar|Procesar/i }).first();
     }
 
-    // 2️⃣ Botón clásico (myModalAdd)
-    const modalAdd = page.locator("#myModalAdd");
-    if (await modalAdd.isVisible().catch(() => false)) {
-      await modalAdd.click({ force: true });
-      logConsole(`✅ Click en #myModalAdd (Procesar Directo clásico)`, runId);
-      await page.waitForTimeout(800);
-    }
+    await boton.waitFor({ state: "visible", timeout: 8000 });
+    await boton.click({ force: true });
+    logConsole(`☑️ Modal confirmado para ${descripcion}`, runId);
 
-    // 3️⃣ Forzar clic en el botón Iniciar (aunque esté oculto)
-    const btnIniciarHidden = await page.$('xpath=//*[@id="myModal"]//input[@type="submit" or @value="Iniciar"]');
-    if (btnIniciarHidden) {
-      await page.evaluate((el) => el.click(), btnIniciarHidden);
-      logConsole(`✅ Click forzado en botón "Iniciar" (modal oculto)`, runId);
-    } else {
-      // fallback: esperar un modal visible y hacer clic normal
-      const modal = page.locator("#myModal");
-      await page.waitForSelector("#myModal", { timeout: 10000 }).catch(() => { });
-      const btnVisible = modal.locator('input[type="submit"], input[value="Iniciar"], button:has-text("Iniciar")');
-      if (await btnVisible.first().isVisible().catch(() => false)) {
-        await btnVisible.first().click({ force: true });
-        logConsole(`✅ Click en botón "Iniciar" visible (fallback)`, runId);
-      } else {
-        logConsole(`⚠️ No se encontró botón "Iniciar" visible ni oculto`, runId);
-      }
-    }
+    await modal.waitFor({ state: "hidden", timeout: 10000 }).catch(() => { });
+  } catch {
+    logConsole(`ℹ️ No se detectó modal para ${descripcion} (posible ejecución directa).`, runId);
+  }
 
-    // 4️⃣ Esperar redirección o forzar regreso
+  // 2) Micro-chequeo de arranque (badge en la misma fila)
+  let arranco = false;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 5000) { // 5s
+    const estadoNow = await leerEstadoExacto(page, sistema, descripcion);
+    if (["EN PROCESO", "COMPLETADO", "ERROR"].includes(estadoNow)) {
+      arranco = true;
+      break;
+    }
+    await page.waitForTimeout(500);
+  }
+
+  // 3) Solo forzar regreso si arrancó (o si ya estamos en /Procesar)
+  if (arranco) {
     try {
-      await page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 180000 });
-      logConsole(`↩️ Redirección detectada correctamente a la tabla principal.`, runId);
+      await page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 120000 });
+      logConsole("↩️ Redirección detectada correctamente a la tabla principal.", runId);
     } catch {
       const base = page.url().split("/ProcesoCierre")[0] || "";
       const destino = `${base}/ProcesoCierre/Procesar`;
       logConsole(`🔁 Forzando regreso manual a la tabla principal: ${destino}`, runId);
       await page.goto(destino, { waitUntil: "load", timeout: 120000 });
     }
-
-    await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
-    await page.waitForTimeout(500);
-  } catch (err) {
-    logConsole(`⚠️ completarEjecucionManual (forzado DOM): ${err.message}`, runId);
+  } else {
+    logConsole("⚠️ No se evidenció arranque → NO forzar regreso para evitar falsos positivos.", runId);
   }
 }
 
