@@ -511,6 +511,9 @@ function cargarFechaF4Persistente(descripcion) {
   }
 }
 
+// ============================================================
+// ▶️ Ejecutar proceso — versión final QA7 (flujo estable con clic real)
+// ============================================================
 async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = "GLOBAL") {
   const { esperarCompletado, navegarConRetries } = require("./navegacion.js");
   const { ejecutarPreScripts } = require("./helpers.js");
@@ -624,10 +627,10 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         await page.waitForSelector('text=Ejecución Manual de Proceso', { timeout: 20000 });
         logConsole(`📄 Pantalla "Ejecución Manual de Proceso" visible`, runId);
 
-        // 3️⃣ Ejecutar flujo original estable del modal (idéntico al que sí funcionaba)
+        // 3️⃣ Ejecutar flujo del modal (garantiza clic real)
         await completarEjecucionManual(page, runId);
 
-        // 4️⃣ Esperar resultado real
+        // 4️⃣ Esperar estado final correcto en la tabla
         const estadoFinal = await esperarCompletado(page, descripcion, runId);
         logConsole(`📊 [F4] Correr Calendario: estado final = ${estadoFinal}`, runId);
 
@@ -686,6 +689,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   return "Completado";
 }
+
 
 
 // =============================================================
