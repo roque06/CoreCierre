@@ -573,6 +573,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
     return isNaN(date.getTime()) ? null : date;
   };
 
+  const buildClaveProceso = (sistema, descripcion, fechaTxt) =>
+    `${normalizar(sistema)}|${normalizar(descripcion)}|${(fechaTxt || "").trim()}`;
+
   async function getFilaExacta(page, sistema, descripcion) {
     const filas = page.locator("#myTable tbody tr");
     const total = await filas.count();
@@ -589,7 +592,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
     return null;
   }
 
-  // --- Lee el badge de estado en la fila exacta ---
   async function leerEstadoExacto(page, sistema, descripcion) {
     const fila = await getFilaExacta(page, sistema, descripcion);
     if (!fila) return "DESCONOCIDO";
@@ -601,7 +603,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       return "DESCONOCIDO";
     }
   }
-
 
   // ============================================================
   // 📆 Detección de “fecha mayor” (solo F4)
@@ -624,6 +625,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         if (val) fechasF4.push(val);
       } catch { }
     }
+
     if (fechasF4.length === 0) return false;
 
     const fechaMayorGlobal = fechasF4.reduce((a, b) => (a > b ? a : b));
@@ -652,9 +654,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       const fechaTxt = (await fila.$eval("td:nth-child(7)", el => el.innerText.trim())) || "";
       const estado = ((await fila.$eval("td:nth-child(10)", el => el.innerText.trim())) || "").toUpperCase();
 
-      // Evita reintentar lo ya marcado globalmente por descripción
+      const claveEjec = buildClaveProceso(sistema, descripcion, fechaTxt);
       if (!["PENDIENTE", "ERROR"].includes(estado)) continue;
-      if (procesosEjecutadosGlobal.has(normalizar(descripcion))) continue;
+      if (procesosEjecutadosGlobal.has(claveEjec)) continue;
 
       logConsole(`▶️ [${sistema}] ${descripcion} (${estado}) — Fecha=${fechaTxt}`, runId);
 
@@ -670,7 +672,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
             await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
             await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
             filas = await page.$$("#myTable tbody tr");
-            // No lo marcamos por descripción porque puede haber otras filas F4 con misma desc y otra fecha.
             continue;
           }
         }
@@ -683,7 +684,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         await ejecutarPreScripts(descripcion, baseDatos);
       }
 
-      // Fila exacta para evitar confusión de homónimos (p.ej. "Correr Calendario" en otros sistemas)
       const filaExacta = await getFilaExacta(page, sistema, descripcion);
       if (!filaExacta) {
         logConsole(`⚠️ No se encontró la fila exacta para ${sistema} | ${descripcion}`, runId);
@@ -701,31 +701,14 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
       await botonProcesar.scrollIntoViewIfNeeded();
       logConsole(`🖱️ Click en "${descripcion}" (force)`, runId);
-      await botonProcesar.click({ force: true }); // ← clic real compatible con la app【turn2file23】
+      await botonProcesar.click({ force: true });
 
-      // Confirmar modal (si aparece) con patrón del proyecto【turn2file23】
-      try {
-        await page.waitForSelector(".modal-dialog", { state: "visible", timeout: 15000 });
-        const modal = page.locator(".modal-dialog");
-        await page.locator(".overlay, .loading, .spinner").waitFor({ state: "hidden", timeout: 5000 }).catch(() => { });
-        const posibles = ["Iniciar", "INICIAR", "Aceptar", "ACEPTAR", "Ejecutar", "EJECUTAR", "Procesar"];
-        let botonModal = null;
-        for (const n of posibles) {
-          const cand = modal.getByRole("button", { name: n });
-          if (await cand.count()) { botonModal = cand; break; }
-        }
-        if (!botonModal) {
-          botonModal = modal.locator("button").filter({ hasText: /Iniciar|Aceptar|Ejecutar|Procesar/i }).first();
-        }
-        await botonModal.waitFor({ state: "visible", timeout: 8000 });
-        await botonModal.click({ force: true });
-        logConsole(`☑️ Modal confirmado para ${descripcion}`, runId);
-        await modal.waitFor({ state: "hidden", timeout: 10000 }).catch(() => { });
-      } catch {
-        logConsole(`ℹ️ No se detectó modal para ${descripcion} (posible ejecución directa).`, runId);
+      // Confirma modal y espera arranque real
+      if (typeof completarEjecucionManual === "function") {
+        await completarEjecucionManual(page, sistema, descripcion, runId);
       }
 
-      // Espera robusta: badge de la MISMA fila (sistema + descripción)
+      // Espera robusta: badge de la MISMA fila
       let estadoFinal = "DESCONOCIDO";
       for (let intento = 0; intento < 60; intento++) {
         await page.waitForTimeout(1000);
@@ -740,17 +723,15 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       if (estadoFinal === "ERROR") {
         logConsole(`❌ ${descripcion} finalizó con error.`, runId);
       } else if (estadoFinal === "COMPLETADO") {
-        procesosEjecutadosGlobal.set(normalizar(descripcion), true);
+        procesosEjecutadosGlobal.set(claveEjec, true);
         logConsole(`✅ ${descripcion} marcado COMPLETADO.`, runId);
       } else {
         logConsole(`⚠️ ${descripcion} quedó en estado ${estadoFinal} — no se marca.`, runId);
       }
 
-      // Volver a la tabla (el spec también lo hace; esto mantiene la coherencia de vuelta)【turn2file18】
       await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
       await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
 
-      // Refrescar referencias de filas y reiniciar índice para re-evaluar
       filas = await page.$$("#myTable tbody tr");
       i = -1;
     } catch (err) {
