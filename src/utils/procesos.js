@@ -55,20 +55,36 @@ function _norm(t) {
 }
 
 // Busca la fila exacta por sistema y descripción
+// --- Localiza la fila exacta por Sistema + Descripción ---
 async function getFilaExacta(page, sistema, descripcion) {
-  const sis = _norm(sistema);
-  const desc = _norm(descripcion);
-  const filas = await page.$$("#myTable tbody tr");
+  const normalizar = (t) =>
+    (t || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toUpperCase();
 
-  for (const f of filas) {
-    try {
-      const sisTxt = _norm(await f.$eval("td:nth-child(3)", el => el.innerText));
-      const descTxt = _norm(await f.$eval("td:nth-child(5)", el => el.innerText));
-      if (sisTxt === sis && descTxt.includes(desc)) return f;
-    } catch { }
+  const filas = page.locator("#myTable tbody tr");
+  const total = await filas.count();
+  const sisN = normalizar(sistema);
+  const descN = normalizar(descripcion);
+
+  for (let i = 0; i < total; i++) {
+    const fila = filas.nth(i);
+    const celdas = fila.locator("td");
+    if ((await celdas.count()) < 10) continue;
+
+    const sis = normalizar((await celdas.nth(2).innerText()).trim());
+    const desc = normalizar((await celdas.nth(4).innerText()).trim());
+
+    if (sis === sisN && desc.includes(descN)) {
+      return fila;
+    }
   }
   return null;
 }
+
 
 // Lee el estado exacto de una fila (badge o columna 10)
 async function leerEstadoExacto(page, sistema, descripcion) {
