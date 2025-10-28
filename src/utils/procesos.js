@@ -565,6 +565,34 @@ async function completarEjecucionManual(page, runId = "GLOBAL") {
 
 
 async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = "GLOBAL") {
+  const fs = require("fs");
+  const path = require("path");
+  const estadoCachePath = path.resolve(__dirname, "../cache/estado_persistente.json");
+
+  // ============================================================
+  // 🧩 Helpers para cache persistente universal
+  // ============================================================
+  function cargarCacheEstado() {
+    try {
+      if (!fs.existsSync(estadoCachePath)) return {};
+      return JSON.parse(fs.readFileSync(estadoCachePath, "utf-8"));
+    } catch {
+      return {};
+    }
+  }
+
+  function guardarCacheEstado(cache) {
+    try {
+      fs.writeFileSync(estadoCachePath, JSON.stringify(cache, null, 2), "utf-8");
+    } catch { }
+  }
+
+  // ============================================================
+  // 🧩 Inicialización y cache cargado
+  // ============================================================
+  let cacheEstado = cargarCacheEstado();
+  cacheEstado[baseDatos] = cacheEstado[baseDatos] || {};
+
   await page.waitForSelector("#myTable tbody tr");
   logConsole(`▶️ Analizando sistema ${sistema}...`, runId);
 
@@ -604,12 +632,28 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       const estado = ((await fila.$eval("td:nth-child(10)", el => el.innerText.trim())) || "").toUpperCase();
 
       const claveEjec = buildClaveProceso(sistema, descripcion, fechaTxt);
+
+      // ============================================================
+      // 🧠 Reanudar si estaba "EN PROCESO" al reiniciar
+      // ============================================================
+      const estadoPrevio = cacheEstado[baseDatos][claveEjec];
+      if (estadoPrevio === "EN PROCESO") {
+        logConsole(`⏸️ ${descripcion} estaba EN PROCESO al reiniciar — retomando espera hasta completado.`, runId);
+        const resultadoReanudo = await esperarHastaCompletado(page, sistema, descripcion, claveEjec, runId);
+        if (resultadoReanudo === "Completado") {
+          logConsole(`✅ ${descripcion} completado tras reanudación.`, runId);
+          cacheEstado[baseDatos][claveEjec] = "COMPLETADO";
+          guardarCacheEstado(cacheEstado);
+          continue;
+        }
+      }
+
       if (!["PENDIENTE", "ERROR"].includes(estado)) continue;
       if (procesosEjecutadosGlobal.has(claveEjec)) continue;
 
       logConsole(`▶️ [${sistema}] ${descripcion} (${estado}) — Fecha=${fechaTxt}`, runId);
 
-      // =============================== ⚙️ Pre-Scripts configurados ===============================
+      // =============================== ⚙️ Pre-Scripts ===============================
       if (typeof ejecutarPreScripts === "function") {
         try {
           await ejecutarPreScripts(descripcion, baseDatos, runId);
@@ -663,19 +707,29 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         logConsole(`⚠️ No se detectó modal: ${e.message}`, runId);
       }
 
-      // =============================== 🕒 Espera INDEFINIDA del estado ===============================
+      // =============================== 🕒 Espera INDEFINIDA ===============================
       let estadoFinal = null;
       let ciclos = 0;
 
       while (true) {
         await page.waitForTimeout(2000);
         const nuevo = await leerEstadoExacto(page, sistema, descripcion);
+
         if (nuevo) {
           if (nuevo !== estado && ciclos % 5 === 0) {
             logConsole(`📄 ${descripcion}: estado actual = ${nuevo}`, runId);
           }
+
+          // 🧩 Guardar en cache cuando entra en proceso
+          if (nuevo === "EN PROCESO") {
+            cacheEstado[baseDatos][claveEjec] = "EN PROCESO";
+            guardarCacheEstado(cacheEstado);
+          }
+
           if (nuevo === "COMPLETADO" || nuevo === "ERROR") {
             estadoFinal = nuevo;
+            cacheEstado[baseDatos][claveEjec] = estadoFinal;
+            guardarCacheEstado(cacheEstado);
             logConsole(`📊 ${descripcion}: ${estado} → ${estadoFinal}`, runId);
             break;
           }
@@ -694,7 +748,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       // =============================== ⚠️ Manejo de ERROR con job ===============================
       if (estadoFinal === "ERROR") {
         logConsole(`❌ ${descripcion} finalizó con error.`, runId);
-
         try {
           const hayJob = typeof monitorearF4Job === "function"
             ? await monitorearF4Job(connectString, baseDatos, runId)
@@ -702,8 +755,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
           if (hayJob) {
             logConsole(`🟡 Job Oracle activo detectado — esperando que finalice...`, runId);
-
-            // 🔁 Nueva versión: ejecución del UPDATE desde Oracle (no DOM)
             const { runSqlInline } = require("./oracleUtils.js");
             await monitorearF4Job(connectString, baseDatos, async () => {
               const sql = `
@@ -717,29 +768,19 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
                    )`;
               await runSqlInline(sql, connectString);
             }, runId);
-
             logConsole(`✅ Proceso ${descripcion} (${sistema}) actualizado a 'T' tras finalizar job.`, runId);
           } else {
             logConsole(`ℹ️ No se detectó job Oracle activo para ${descripcion} — continúa flujo normal.`, runId);
-            procesosEjecutadosGlobal.set(claveEjec, true);
-            logConsole(`🔁 Proceso ${descripcion} en ERROR será omitido en próximos ciclos.`, runId);
           }
         } catch (e) {
           logConsole(`⚠️ Error monitoreando job Oracle: ${e.message}`, runId);
-          procesosEjecutadosGlobal.set(claveEjec, true);
-          logConsole(`🔁 Proceso ${descripcion} marcado como tratado tras error de monitoreo.`, runId);
         }
-
-        await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
-        await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
-        filas = await page.$$("#myTable tbody tr");
-        i = -1;
-        continue;
       }
 
-      // =============================== ✅ Completado normal ===============================
       if (estadoFinal === "COMPLETADO") {
         procesosEjecutadosGlobal.set(claveEjec, true);
+        cacheEstado[baseDatos][claveEjec] = "COMPLETADO";
+        guardarCacheEstado(cacheEstado);
         logConsole(`✅ ${descripcion} marcado COMPLETADO.`, runId);
       }
 
