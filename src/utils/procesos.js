@@ -316,6 +316,17 @@ async function esperarCorrerCalendarioF4(page, baseDatos, connectString, runId =
 }
 
 
+function buildClaveProceso(sistema, descripcion, fechaTxt) {
+  const norm = (t) =>
+    (t || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toUpperCase();
+
+  return `${norm(sistema)}|${norm(descripcion)}|${(fechaTxt || "").trim()}`;
+}
 
 
 
