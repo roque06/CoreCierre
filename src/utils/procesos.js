@@ -28,20 +28,10 @@ if (!fs.existsSync(cacheDir)) {
 const procesosEjecutadosGlobal = new Map();
 const procesosSaltados = new Set();
 
-// =============================================================
-// 🧩 Normalizador seguro
-// =============================================================
-function normalizarTexto(texto) {
-  return texto?.normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toUpperCase();
-}
 
 
 // ============================================================
-// 🧩 Normalizador y lectura exacta de filas/estados
+// 🧩 Normalizador y lectura exacta de filas/estadosleerEstadoExacto
 // ============================================================
 
 // Normaliza texto quitando tildes, espacios y mayúsculas
@@ -86,6 +76,49 @@ async function getFilaExacta(page, sistema, descripcion) {
 }
 
 
+// ============================================================
+// 🧩 Localizadores globales — accesibles desde todo el módulo
+// ============================================================
+function normalizarTexto(txt) {
+  return (txt || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+}
+
+// --- Localiza la fila exacta ---
+async function getFilaExacta(page, sistema, descripcion) {
+  const filas = page.locator("#myTable tbody tr");
+  const total = await filas.count();
+  const sisN = normalizarTexto(sistema);
+  const descN = normalizarTexto(descripcion);
+
+  for (let i = 0; i < total; i++) {
+    const fila = filas.nth(i);
+    const celdas = fila.locator("td");
+    if ((await celdas.count()) < 10) continue;
+
+    const sis = normalizarTexto(await celdas.nth(2).innerText());
+    const desc = normalizarTexto(await celdas.nth(4).innerText());
+    if (sis === sisN && desc.includes(descN)) return fila;
+  }
+  return null;
+}
+
+// --- Lee el badge exacto ---
+async function leerEstadoExacto(page, sistema, descripcion) {
+  const fila = await getFilaExacta(page, sistema, descripcion);
+  if (!fila) return "DESCONOCIDO";
+  try {
+    const badge = fila.locator("td .badge");
+    const texto = ((await badge.textContent()) || "").trim().toUpperCase();
+    return texto || "DESCONOCIDO";
+  } catch {
+    return "DESCONOCIDO";
+  }
+}
 
 
 
@@ -563,17 +596,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
     return null;
   }
 
-  async function leerEstadoExacto(page, sistema, descripcion) {
-    const fila = await getFilaExacta(page, sistema, descripcion);
-    if (!fila) return "DESCONOCIDO";
-    try {
-      const badge = fila.locator("td .badge");
-      const texto = ((await badge.textContent()) || "").trim().toUpperCase();
-      return texto || "DESCONOCIDO";
-    } catch {
-      return "DESCONOCIDO";
-    }
-  }
+
 
   // ============================================================
   // 📆 Detección de “fecha mayor” (solo F4)
