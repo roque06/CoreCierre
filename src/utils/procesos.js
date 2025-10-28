@@ -564,10 +564,6 @@ async function completarEjecucionManual(page, runId = "GLOBAL") {
 }
 
 
-
-// ============================================================
-// ▶️ Ejecutar proceso (espera indefinida + pre-scripts + control de jobs + UPDATE preciso)
-// ============================================================
 async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = "GLOBAL") {
   await page.waitForSelector("#myTable tbody tr");
   logConsole(`▶️ Analizando sistema ${sistema}...`, runId);
@@ -663,7 +659,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         }
 
         await completarEjecucionManual(page, runId);
-
       } catch (e) {
         logConsole(`⚠️ No se detectó modal: ${e.message}`, runId);
       }
@@ -674,7 +669,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
       while (true) {
         await page.waitForTimeout(2000);
-
         const nuevo = await leerEstadoExacto(page, sistema, descripcion);
         if (nuevo) {
           if (nuevo !== estado && ciclos % 5 === 0) {
@@ -694,7 +688,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
           await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
         }
-
         ciclos++;
       }
 
@@ -709,44 +702,28 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
           if (hayJob) {
             logConsole(`🟡 Job Oracle activo detectado — esperando que finalice...`, runId);
-            await monitorearF4Job(connectString, baseDatos, runId, true);
-            logConsole(`✅ Todos los jobs Oracle finalizaron correctamente.`, runId);
 
-            try {
-              const link = await fila.$("a[href*='CodProceso']");
-              const href = (await link?.getAttribute("href")) || "";
-              const codSistema = href.match(/CodSistema=([^&]+)/i)?.[1] || sistema;
-              const codProceso = href.match(/CodProceso=([^&]+)/i)?.[1] || "0";
-
+            // 🔁 Nueva versión: ejecución del UPDATE desde Oracle (no DOM)
+            const { runSqlInline } = require("./oracleUtils.js");
+            await monitorearF4Job(connectString, baseDatos, async () => {
               const sql = `
                 UPDATE PA.PA_BITACORA_PROCESO_CIERRE
                    SET ESTATUS='T', FECHA_FIN = SYSDATE
-                 WHERE COD_SISTEMA='${codSistema}'
-                   AND COD_PROCESO=${codProceso}
+                 WHERE COD_SISTEMA='${sistema}'
                    AND TRUNC(FECHA) = (
                      SELECT TRUNC(MAX(x.FECHA))
                        FROM PA.PA_BITACORA_PROCESO_CIERRE x
-                      WHERE x.COD_SISTEMA='${codSistema}'
-                        AND x.COD_PROCESO=${codProceso}
+                      WHERE x.COD_SISTEMA='${sistema}'
                    )`;
+              await runSqlInline(sql, connectString);
+            }, runId);
 
-              await fetch("http://127.0.0.1:4000/api/run-script", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ baseDatos, script: "inline", connectString, sqlInline: sql }),
-              });
-
-              logConsole(`🩹 Proceso ${descripcion} (${codSistema}-${codProceso}) actualizado a 'T' tras finalizar job.`, runId);
-            } catch (updateErr) {
-              logConsole(`⚠️ Error aplicando UPDATE 'T': ${updateErr.message}`, runId);
-            }
-
+            logConsole(`✅ Proceso ${descripcion} (${sistema}) actualizado a 'T' tras finalizar job.`, runId);
           } else {
             logConsole(`ℹ️ No se detectó job Oracle activo para ${descripcion} — continúa flujo normal.`, runId);
             procesosEjecutadosGlobal.set(claveEjec, true);
             logConsole(`🔁 Proceso ${descripcion} en ERROR será omitido en próximos ciclos.`, runId);
           }
-
         } catch (e) {
           logConsole(`⚠️ Error monitoreando job Oracle: ${e.message}`, runId);
           procesosEjecutadosGlobal.set(claveEjec, true);
