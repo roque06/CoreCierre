@@ -530,6 +530,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   global.procesosEjecutadosGlobal = procesosEjecutadosGlobal;
   const f4Procesados = new Set();
 
+  // ============================================================
+  // 🧩 Helper: parsear fechas (tolerante)
+  // ============================================================
   const parseFecha = (txt) => {
     if (!txt) return null;
     const clean = txt.replace(/[–\-\.]/g, "/").trim();
@@ -539,6 +542,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
     return isNaN(date.getTime()) ? null : date;
   };
 
+  // ============================================================
+  // 🧠 Detectar si el proceso F4 tiene una fecha mayor real
+  // ============================================================
   async function esF4FechaMayor(descripcionActual, fechaTxt, filasActuales, runId = "GLOBAL") {
     const normalize = (t) =>
       t.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -586,6 +592,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
     return false;
   }
 
+  // ============================================================
+  // 🚀 Recorrer todas las filas del sistema actual
+  // ============================================================
   let filas = await page.$$("#myTable tbody tr");
 
   for (let i = 0; i < filas.length; i++) {
@@ -602,6 +611,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       const esCorrerCalendarioF4 = sistema === "F4" && descUpper.includes("CORRER CALENDARIO");
       if (procesosEjecutadosGlobal.has(descUpper) && !esCorrerCalendarioF4) continue;
 
+      // ✅ Marcar Correr Calendario F2/MTC como completado virtual
       if (descUpper.includes("CORRER CALENDARIO") && ["F2", "MTC"].includes(sistema)) {
         logConsole(`⏭️ [Truco] ${sistema} ${descripcion} marcado como completado virtual.`, runId);
         procesosEjecutadosGlobal.set(descUpper, true);
@@ -623,6 +633,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
       logConsole(`▶️ [${sistema}] ${descripcion} (${estado}) — Fecha=${fechaTxt}`, runId);
 
+      // ============================================================
+      // 🧩 Caso especial: Correr Calendario (F4)
+      // ============================================================
       if (esCorrerCalendarioF4) {
         logConsole(`🧩 [F4] Caso especial "Correr Calendario"`, runId);
 
@@ -630,12 +643,15 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           const tieneMayor = await esF4FechaMayor(descripcion, fechaTxt, filas, runId);
 
           if (tieneMayor) {
+            // 🔸 Fecha mayor → modo SQL
             logConsole(`📆 [F4 Fecha Mayor] Ejecutando Correr Calendario vía SQL`, runId);
             const resultadoF4 = await ejecutarF4FechaMayor(page, baseDatos, connectString, runId);
+
             if (resultadoF4 === "F4_COMPLETADO_MAYOR") {
               await esperarCorrerCalendarioF4(page, baseDatos, connectString, runId);
             }
           } else {
+            // 🔹 SIN FECHA MAYOR → igual a cualquier proceso normal
             logConsole(`🖱️ [F4] Correr Calendario sin fecha mayor → flujo normal`, runId);
 
             const filaLoc = page.locator(`#myTable tbody tr:has-text("${descripcion}")`);
@@ -647,7 +663,13 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
               await boton.first().scrollIntoViewIfNeeded();
               await boton.first().click({ force: true });
               logConsole(`✅ Click en "Procesar Directo" para Correr Calendario`, runId);
-              await completarEjecucionManual(page, runId);
+
+              const btnIniciar = page.locator(
+                '#myModal input[type="submit"][value="Iniciar"], #myModalAdd input[type="submit"][value="Iniciar"]'
+              );
+              await btnIniciar.waitFor({ state: "visible", timeout: 10000 });
+              await btnIniciar.click({ force: true });
+              logConsole(`✅ Click en botón "Iniciar" (modal visible)`, runId);
 
               const estadoFinal = await esperarCompletado(page, descripcion, runId, "F4", connectString, baseDatos);
               logConsole(`📊 [F4] Correr Calendario completado (${estadoFinal}) — flujo continúa.`, runId);
@@ -664,6 +686,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         }
       }
 
+      // ============================================================
+      // 🧩 Caso especial F4 (FECHA MAYOR)
+      // ============================================================
       if (sistema === "F4") {
         const tieneFechaMayor = await esF4FechaMayor(descripcion, fechaTxt, filas, runId);
         if (tieneFechaMayor) {
@@ -679,7 +704,11 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         }
       }
 
+      // ============================================================
+      // 🔹 Flujo normal para cualquier otro proceso
+      // ============================================================
       await ejecutarPreScripts(descripcion, baseDatos);
+
       const filaLocator = page.locator("#myTable tbody tr", { hasText: descripcion });
       let botonProcesar = filaLocator.locator('a[href*="ProcesarDirecto"]:has-text("Procesar Directo")');
       if ((await botonProcesar.count()) === 0)
@@ -694,9 +723,18 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       await botonProcesar.first().click({ force: true });
       logConsole(`🖱️ Click ejecutado en "${descripcion}"`, runId);
 
-      await completarEjecucionManual(page, runId);
+      const btnIniciar = page.locator(
+        '#myModal input[type="submit"][value="Iniciar"], #myModalAdd input[type="submit"][value="Iniciar"]'
+      );
+      await btnIniciar.waitFor({ state: "visible", timeout: 10000 });
+      await btnIniciar.click({ force: true });
+      logConsole(`✅ Click en botón "Iniciar"`, runId);
+
+      procesosEjecutadosGlobal.set(descUpper, true);
+
       const estadoFinal = await esperarCompletado(page, descripcion, runId);
       logConsole(`📊 ${descripcion}: estado final = ${estadoFinal}`, runId);
+
     } catch (err) {
       if (err.message?.includes("context") || err.message?.includes("Execution context")) {
         logConsole(`⚠️ Error DOM/contexto (${err.message}) — ignorado.`, runId);
