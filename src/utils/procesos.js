@@ -556,9 +556,6 @@ async function completarEjecucionManual(page, runId = "GLOBAL") {
 
 
 // ============================================================
-// ▶️ Ejecutar proceso (versión final adaptada con control de jobs y UPDATE preciso)
-// ============================================================
-// ============================================================
 // ▶️ Ejecutar proceso (espera indefinida + control de jobs + UPDATE preciso)
 // ============================================================
 async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = "GLOBAL") {
