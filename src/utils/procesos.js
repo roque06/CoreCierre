@@ -740,60 +740,71 @@ async function ejecutarPorHref(page, fullUrl, descripcion, baseDatos, runId = "G
 
 
 
-
-
+// ============================================================
+// 🧩 completarEjecucionManual — versión QA7 corregida y estable
+// ============================================================
 async function completarEjecucionManual(page, runId = "GLOBAL") {
   try {
-    logConsole("⚙️ completarEjecucionManual (strict) — abriendo modal...", runId);
+    logConsole("⚙️ completarEjecucionManual (QA7 stable) — abriendo modal...", runId);
 
-    // 1) Botón superior "Procesar Directo": acepta cualquiera de los dos estilos que he visto en tu UI
-    const btnArriba = page.locator(
+    // 1️⃣ Click en el botón superior "Procesar Directo"
+    const btnProcesar = page.locator(
       'button:has-text("Procesar Directo"), input[value="Procesar Directo"], #myModalAdd'
     );
-    await btnArriba.first().waitFor({ state: "visible", timeout: 20000 });
-    await btnArriba.first().scrollIntoViewIfNeeded();
-    await page.waitForTimeout(200);
-    await btnArriba.first().click({ force: true });
+    await btnProcesar.first().waitFor({ state: "visible", timeout: 15000 });
+    await btnProcesar.first().scrollIntoViewIfNeeded();
+    await btnProcesar.first().click({ force: true });
     logConsole("✅ Click en botón superior 'Procesar Directo'", runId);
 
-    // 2) Esperar el modal visible
+    // 2️⃣ Esperar que el modal aparezca (visible)
     const modal = page.locator("#myModal");
     await modal.waitFor({ state: "visible", timeout: 20000 });
     logConsole("📦 Modal visible", runId);
 
-    // 3) Localizar el botón Iniciar EXACTO (tu CSS)
-    const iniciar = page.locator("#myModal > div > div > form > div.modal-footer > input");
-    await iniciar.waitFor({ state: "visible", timeout: 15000 });
+    // 3️⃣ Localizar el botón “Iniciar” usando tu selector exacto
+    const selectorIniciar = "#myModal > div > div > form > div.modal-footer > input";
+    const btnIniciar = page.locator(selectorIniciar);
+    await btnIniciar.waitFor({ state: "visible", timeout: 15000 });
+    logConsole("✅ Botón 'Iniciar' localizado", runId);
 
-    // A veces el botón puede estar disabled unos ms por scripts; espera a que esté habilitado
-    await page.waitForFunction((sel) => {
-      const el = document.querySelector(sel);
-      return !!el && !el.disabled;
-    }, {}, "#myModal > div > div > form > div.modal-footer > input");
+    // ✅ CORRECCIÓN: espera a que el botón esté habilitado (sin error de selector)
+    await page.waitForFunction(
+      (sel) => {
+        const el = document.querySelector(sel);
+        return el && !el.disabled && el.offsetParent !== null;
+      },
+      selectorIniciar, // se pasa como string, NO como objeto
+      { timeout: 10000 }
+    );
 
-    // 4) Click + esperar redirección NATURAL (mismo tick con Promise.all)
-    logConsole("🖱️ Clic en 'Iniciar' (esperando redirección)...", runId);
+    await btnIniciar.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(300);
+
+    // 4️⃣ Click + espera simultánea de redirección NATURAL
+    logConsole("🖱️ Click real en 'Iniciar' (esperando redirección)...", runId);
     await Promise.all([
       page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 180000 }),
-      iniciar.click({ force: true })
+      btnIniciar.click({ force: true, delay: 80 }),
     ]);
 
-    // 5) Asegurar que la tabla esté lista
+    // 5️⃣ Confirmar tabla recargada
     await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
     await page.waitForTimeout(300);
-    logConsole("↩️ Redirección natural detectada, tabla lista.", runId);
+    logConsole("↩️ Redirección natural detectada y tabla principal cargada.", runId);
   } catch (err) {
-    logConsole(`⚠️ completarEjecucionManual (strict) error: ${err.message}`, runId);
-    // fallback: si por lo que sea no redirigió, regresa manualmente
+    logConsole(`⚠️ completarEjecucionManual error: ${err.message}`, runId);
+
+    // 🩹 Fallback: si no redirige, vuelve manualmente
     try {
-      const base = page.url().split("/ProcesoCierre")[0] || "";
-      await page.goto(`${base}/ProcesoCierre/Procesar`, { waitUntil: "load", timeout: 120000 });
-      await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
-    } catch { }
+      const base = page.url().split("/ProcesoCierre")[0];
+      await page.goto(`${base}/ProcesoCierre/Procesar`, { waitUntil: "load", timeout: 90000 });
+      await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
+      logConsole("✅ Recuperado con recarga manual", runId);
+    } catch (e2) {
+      logConsole(`❌ Fallback de navegación fallido: ${e2.message}`, runId);
+    }
   }
 }
-
-
 
 
 
