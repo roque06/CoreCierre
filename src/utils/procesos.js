@@ -524,7 +524,7 @@ function cargarFechaF4Persistente(descripcion) {
 
 
 async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = "GLOBAL") {
-  const { esperarEstadoTabla } = require("./navegacion.js");
+  const { esperarEstadoTabla, navegarConRetries } = require("./navegacion.js");
   await page.waitForSelector("#myTable tbody tr");
   logConsole(`▶️ Analizando sistema ${sistema}...`, runId);
 
@@ -645,29 +645,67 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         logConsole(`✅ Click en botón "Procesar Directo" (XPath //*[@id="myModalAdd"])`, runId);
 
         // ------------------------------------------------------------
-        // Paso 3️⃣ — Esperar modal y hacer clic en "Iniciar" (modo natural QA7)
+        // Paso 3️⃣ — Esperar modal y hacer clic en "Iniciar" (natural QA7)
         // ------------------------------------------------------------
         logConsole(`⚙️ Esperando apertura del modal de ejecución...`, runId);
 
-        // Esperar que el modal aparezca
-        await page.waitForSelector('#myModal', { state: 'visible', timeout: 15000 });
-        logConsole(`✅ Modal visible — listo para ejecutar clic en "Iniciar"`, runId);
-
-        // Buscar el botón "Iniciar" dentro del modal
-        const btnIniciar = await page.$('//*[@id="myModal"]/div/div/form/div[2]/input');
-
-        if (btnIniciar) {
-          try {
+        try {
+          await page.waitForSelector('#myModal', { state: 'visible', timeout: 15000 });
+          logConsole(`✅ Modal visible — listo para ejecutar clic en "Iniciar"`, runId);
+          const btnIniciar = await page.$('//*[@id="myModal"]/div/div/form/div[2]/input');
+          if (btnIniciar) {
             await btnIniciar.scrollIntoViewIfNeeded();
-            await page.waitForTimeout(800); // pequeño delay para estabilidad
+            await page.waitForTimeout(800);
             await btnIniciar.click({ force: true });
             logConsole(`✅ Click en botón "Iniciar" ejecutado correctamente`, runId);
-          } catch (err) {
-            logConsole(`❌ Error al intentar hacer clic en "Iniciar": ${err.message}`, runId);
+          } else {
+            logConsole(`⚠️ No se encontró el botón "Iniciar" dentro del modal`, runId);
           }
-        } else {
-          logConsole(`⚠️ No se encontró el botón "Iniciar" dentro del modal`, runId);
+        } catch (err) {
+          logConsole(`⚠️ Modal no apareció o se cerró demasiado rápido (${err.message})`, runId);
         }
+
+        // ------------------------------------------------------------
+        // Paso 4️⃣ — Esperar redirección natural de la web
+        // ------------------------------------------------------------
+        try {
+          logConsole(`⏳ Esperando redirección natural de la web...`, runId);
+          await page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 180000 });
+          await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
+          logConsole(`✅ Redirección natural detectada — tabla principal cargada.`, runId);
+        } catch (err) {
+          logConsole(`⚠️ No se detectó redirección automática: ${err.message}`, runId);
+          const base = page.url().split("/ProcesoCierre")[0];
+          await navegarConRetries(page, `${base}/ProcesoCierre/Procesar`);
+          await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
+          logConsole(`✅ Tabla recargada manualmente.`, runId);
+        }
+
+        // ------------------------------------------------------------
+        // Paso 5️⃣ — Leer estado real (solo F4 exacto)
+        // ------------------------------------------------------------
+        try {
+          const filasCheck = await page.$$("#myTable tbody tr");
+          let estadoReal = "DESCONOCIDO";
+          for (const fila2 of filasCheck) {
+            try {
+              const sistemaTxt = (await fila2.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase())) || "";
+              const descTxt = (await fila2.$eval("td:nth-child(5)", el => el.innerText.trim().toUpperCase())) || "";
+              const estadoTxt = (await fila2.$eval("td:nth-child(10)", el => el.innerText.trim().toUpperCase())) || "";
+              if (sistemaTxt === "F4" && descTxt === descripcion.trim().toUpperCase()) {
+                estadoReal = estadoTxt;
+                break;
+              }
+            } catch { }
+          }
+          logConsole(`📊 Estado DOM real de "${descripcion}": ${estadoReal}`, runId);
+        } catch (err) {
+          logConsole(`⚠️ Error leyendo estado DOM tras ejecución: ${err.message}`, runId);
+        }
+
+        procesosEjecutadosGlobal.set(descUpper, true);
+        continue;
+      }
 
       // ============================================================
       // 🧩 Procesos F4 normales
