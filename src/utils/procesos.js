@@ -663,7 +663,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         logConsole(`❌ ${descripcion} finalizó con error.`, runId);
 
         try {
-          // 🔍 Verificar si existe job activo en Oracle
+          // 🔍 Detectar si existe job activo asociado
           const hayJob = typeof monitorearF4Job === "function"
             ? await monitorearF4Job(connectString, baseDatos, runId)
             : false;
@@ -671,22 +671,30 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           if (hayJob) {
             logConsole(`🟡 Job Oracle activo detectado — esperando que finalice...`, runId);
 
-            // Esperar su finalización
+            // Esperar finalización completa
             await monitorearF4Job(connectString, baseDatos, runId, true);
-            logConsole(`✅ Job Oracle finalizado correctamente.`, runId);
+            logConsole(`✅ Todos los jobs Oracle finalizaron correctamente.`, runId);
 
-            // Actualizar proceso a ESTATUS='T'
+            // =====================================================
+            // 🩹 Actualización precisa por COD_SISTEMA + COD_PROCESO
+            // =====================================================
             try {
+              // Obtener codSistema y codProceso del href
+              const link = await fila.$("a[href*='CodProceso']");
+              const href = (await link?.getAttribute("href")) || "";
+              const codSistema = href.match(/CodSistema=([^&]+)/i)?.[1] || sistema;
+              const codProceso = href.match(/CodProceso=([^&]+)/i)?.[1] || "0";
+
               const sql = `
           UPDATE PA.PA_BITACORA_PROCESO_CIERRE
-             SET ESTATUS='T'
-           WHERE COD_SISTEMA='${sistema}'
-             AND UPPER(DESCRIPCION_PROCESO) LIKE UPPER('%${descripcion}%')
+             SET ESTATUS='T', FECHA_FIN = SYSDATE
+           WHERE COD_SISTEMA='${codSistema}'
+             AND COD_PROCESO=${codProceso}
              AND TRUNC(FECHA) = (
                SELECT TRUNC(MAX(x.FECHA))
                  FROM PA.PA_BITACORA_PROCESO_CIERRE x
-                WHERE x.COD_SISTEMA='${sistema}'
-                  AND UPPER(x.DESCRIPCION_PROCESO) LIKE UPPER('%${descripcion}%')
+                WHERE x.COD_SISTEMA='${codSistema}'
+                  AND x.COD_PROCESO=${codProceso}
              )`;
 
               await fetch("http://127.0.0.1:4000/api/run-script", {
@@ -695,30 +703,32 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
                 body: JSON.stringify({ baseDatos, script: "inline", connectString, sqlInline: sql }),
               });
 
-              logConsole(`🩹 Proceso ${descripcion} actualizado a ESTATUS='T' tras finalizar job.`, runId);
+              logConsole(`🩹 Proceso ${descripcion} (${codSistema}-${codProceso}) actualizado a 'T' tras finalizar job.`, runId);
             } catch (updateErr) {
-              logConsole(`⚠️ Error aplicando actualización a 'T': ${updateErr.message}`, runId);
+              logConsole(`⚠️ Error aplicando UPDATE 'T': ${updateErr.message}`, runId);
             }
 
           } else {
-            // No hay job → no repetir ejecución, marcar y continuar
+            // ❌ Sin job activo: marcar como tratado y continuar
             logConsole(`ℹ️ No se detectó job Oracle activo para ${descripcion} — continúa flujo normal.`, runId);
             procesosEjecutadosGlobal.set(claveEjec, true);
             logConsole(`🔁 Proceso ${descripcion} en ERROR será omitido en próximos ciclos.`, runId);
           }
+
         } catch (e) {
           logConsole(`⚠️ Error monitoreando job Oracle: ${e.message}`, runId);
           procesosEjecutadosGlobal.set(claveEjec, true);
           logConsole(`🔁 Proceso ${descripcion} marcado como tratado tras error de monitoreo.`, runId);
         }
 
-        // Refrescar tabla y continuar
+        // 🔄 Refrescar tabla antes de continuar
         await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
         await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
         filas = await page.$$("#myTable tbody tr");
         i = -1;
         continue;
       }
+
 
 
 
