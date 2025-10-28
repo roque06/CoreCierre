@@ -645,27 +645,40 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         logConsole(`✅ Click en botón "Procesar Directo" (XPath //*[@id="myModalAdd"])`, runId);
 
         // ------------------------------------------------------------
-        // Paso 3️⃣ — Esperar modal y hacer clic en "Iniciar"
+        // Paso 3️⃣ — Esperar modal y hacer clic en "Iniciar" (tolerante)
         // ------------------------------------------------------------
-        let modalAbierto = false;
-        try {
-          modalAbierto = await page.waitForSelector('#myModal', { state: 'visible', timeout: 6000 }).then(() => true).catch(() => false);
-        } catch { }
-        if (modalAbierto) {
-          logConsole(`✅ Modal visible — ejecución manual requerida`, runId);
+        logConsole(`⚙️ Esperando modal o redirección automática...`, runId);
+
+        const [evento] = await Promise.race([
+          Promise.all([
+            page.waitForSelector('#myModal', { state: 'visible', timeout: 5000 })
+              .then(() => 'MODAL'),
+          ]),
+          page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 8000 })
+            .then(() => 'REDIRECCION')
+            .catch(() => null),
+        ]);
+
+        if (evento === 'MODAL') {
+          logConsole(`✅ Modal visible — intento de clic manual en "Iniciar"`, runId);
           const btnIniciar = await page.$('//*[@id="myModal"]/div/div/form/div[2]/input');
           if (btnIniciar) {
-            await btnIniciar.scrollIntoViewIfNeeded();
-            await Promise.all([
-              page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 120000 }),
-              btnIniciar.click({ force: true })
-            ]);
-            logConsole(`✅ Click en botón "Iniciar" ejecutado correctamente`, runId);
+            try {
+              await Promise.all([
+                page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 120000 }),
+                btnIniciar.click({ force: true }),
+              ]);
+              logConsole(`✅ Click en botón "Iniciar" ejecutado correctamente`, runId);
+            } catch (err) {
+              logConsole(`⚠️ No se pudo hacer clic en "Iniciar" (posible redirección rápida): ${err.message}`, runId);
+            }
           } else {
             logConsole(`⚠️ Modal visible pero sin botón "Iniciar"`, runId);
           }
+        } else if (evento === 'REDIRECCION') {
+          logConsole(`⚙️ Redirección automática detectada antes del clic en "Iniciar"`, runId);
         } else {
-          logConsole(`⚙️ El sistema recargó automáticamente sin mostrar modal`, runId);
+          logConsole(`⚠️ Ni modal ni redirección detectados — comportamiento inesperado`, runId);
         }
 
         // ------------------------------------------------------------
@@ -676,6 +689,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
         const estadoReal = await esperarEstadoTabla(page, descripcion);
         const estadoNorm = (estadoReal || "").trim().toUpperCase();
+
         if (["PENDIENTE", "", "EN PROCESO"].includes(estadoNorm)) {
           logConsole(`📌 Estado DOM real de "${descripcion}": ${estadoNorm || "PENDIENTE"}`, runId);
         } else if (estadoNorm === "COMPLETADO") {
@@ -738,6 +752,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   return "Completado";
 }
+
 
 
 // =============================================================
