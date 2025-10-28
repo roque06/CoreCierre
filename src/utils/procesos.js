@@ -823,7 +823,7 @@ async function ejecutarPorHref(page, fullUrl, descripcion, baseDatos, runId = "G
 }
 
 
-async function esperarCorrerCalendarioF4(page, baseDatos, connectString, runId = "GLOBAL") {
+async function completarEjecucionManual(page, baseDatos, connectString, runId = "GLOBAL") {
   const { monitorearF4Job } = require("./oracleUtils.js");
   const intervalo = 4000;
   const MAX_INTENTOS = 45; // ~3 minutos
