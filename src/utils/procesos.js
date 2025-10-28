@@ -109,42 +109,41 @@ async function ejecutarPreScripts(descripcion, baseDatos, runId = "GLOBAL") {
   }
 }
 
-// ============================================================
-// ⏳ EsperarCompletado — monitorea hasta que cambie a Completado/Error
-// ============================================================
-async function esperarHastaCompletado(page, descripcion, runId = "GLOBAL") {
+async function esperarHastaCompletado(page, codSistema, codProceso, descripcion, claveProceso, runId = "GLOBAL") {
+  const nombreProc = descripcion || claveProceso;
+  logConsole(`⏳ Monitoreando "${nombreProc}" hasta estado final (exacto)...`, runId);
+
   const inicio = Date.now();
-  let estadoPrevio = "";
-  const maxMin = 15; // tiempo máximo de espera
-  logConsole(`⏳ Esperando que "${descripcion}" cambie de estado...`, runId);
+  let previo = "";
 
   while (true) {
-    try {
-      const filaLocator = page.locator("#myTable tbody tr", { hasText: descripcion });
-      const badgeLocator = filaLocator.locator("td .badge").first();
-      const estadoActual = ((await badgeLocator.innerText()) || "").trim().toUpperCase();
+    await page.waitForTimeout(5000);
 
-      if (estadoActual !== estadoPrevio) {
-        estadoPrevio = estadoActual;
-        logConsole(`📊 ${descripcion}: ${estadoActual}`, runId);
-      }
+    // Asegura que la tabla esté disponible
+    try { await page.waitForSelector("#myTable tbody tr", { timeout: 15000 }); } catch { }
 
-      if (["COMPLETADO", "ERROR"].includes(estadoActual)) {
-        const dur = ((Date.now() - inicio) / 60000).toFixed(2);
-        logConsole(`✅ ${descripcion}: ${estadoActual} tras ${dur} min`, runId);
-        return estadoActual;
-      }
+    const estado = await leerEstadoExacto(page, codSistema, descripcion);
 
-      const elapsed = (Date.now() - inicio) / 60000;
-      if (elapsed >= maxMin) {
-        logConsole(`⚠️ Timeout esperando "${descripcion}" (15 min). Último estado: ${estadoPrevio}`, runId);
-        return estadoPrevio;
-      }
-    } catch (err) {
-      logConsole(`⚠️ Error leyendo estado de "${descripcion}": ${err.message}`, runId);
+    if (estado !== previo) {
+      previo = estado;
+      logConsole(`📊 ${nombreProc}: ${estado}`, runId);
     }
 
-    await page.waitForTimeout(8000);
+    if (estado === "EN PROCESO" || estado === "DESCONOCIDO" || estado === "") {
+      continue; // seguir esperando
+    }
+    if (estado === "COMPLETADO") {
+      const min = ((Date.now() - inicio) / 60000).toFixed(2);
+      logConsole(`✅ ${nombreProc}: Completado en ${min} min`, runId);
+      return "Completado";
+    }
+    if (estado === "ERROR") {
+      const min = ((Date.now() - inicio) / 60000).toFixed(2);
+      logConsole(`❌ ${nombreProc}: Error en ${min} min`, runId);
+      return "Error";
+    }
+
+    // Otros estados raros → seguir esperando
   }
 }
 
