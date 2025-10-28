@@ -756,6 +756,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
 
 
+
 // =============================================================
 // 🔄 Ejecutar proceso por URL directa
 // =============================================================
