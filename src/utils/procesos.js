@@ -807,43 +807,48 @@ async function ejecutarPorHref(page, fullUrl, descripcion, baseDatos, runId = "G
 // =============================================================
 async function completarEjecucionManual(page, runId = "GLOBAL") {
   try {
-    await page.waitForTimeout(800);
+    await page.waitForTimeout(1000);
 
-    // 1️⃣ Botón azul "Procesar Directo"
+    // 1️⃣ Click en "Procesar Directo" (botón superior)
     const btnProcesar = page.locator('button:has-text("Procesar Directo"), input[value="Procesar Directo"]');
     if (await btnProcesar.first().isVisible().catch(() => false)) {
       await btnProcesar.first().click({ force: true });
-      logConsole(`✅ Click en botón azul "Procesar Directo"`, runId);
-      await page.waitForTimeout(800);
+      logConsole(`✅ Click en botón superior "Procesar Directo"`, runId);
+      await page.waitForTimeout(1000);
     }
 
-    // 2️⃣ Botón clásico (myModalAdd)
+    // 2️⃣ Click forzado en modal clásico (#myModalAdd)
     const modalAdd = page.locator("#myModalAdd");
     if (await modalAdd.isVisible().catch(() => false)) {
       await modalAdd.click({ force: true });
       logConsole(`✅ Click en #myModalAdd (Procesar Directo clásico)`, runId);
-      await page.waitForTimeout(800);
+      await page.waitForTimeout(1000);
     }
 
-    // 3️⃣ Forzar clic en el botón Iniciar (aunque esté oculto)
-    const btnIniciarHidden = await page.$('xpath=//*[@id="myModal"]//input[@type="submit" or @value="Iniciar"]');
-    if (btnIniciarHidden) {
-      await page.evaluate((el) => el.click(), btnIniciarHidden);
+    // 3️⃣ Forzar botón "Iniciar" (visible u oculto)
+    let btnIniciar = await page.$('xpath=//*[@id="myModal"]//input[@type="submit" or @value="Iniciar"]');
+    if (btnIniciar) {
+      await page.evaluate((el) => el.click(), btnIniciar);
       logConsole(`✅ Click forzado en botón "Iniciar" (modal oculto)`, runId);
     } else {
-      // fallback: esperar un modal visible y hacer clic normal
-      const modal = page.locator("#myModal");
-      await page.waitForSelector("#myModal", { timeout: 10000 }).catch(() => { });
-      const btnVisible = modal.locator('input[type="submit"], input[value="Iniciar"], button:has-text("Iniciar")');
-      if (await btnVisible.first().isVisible().catch(() => false)) {
-        await btnVisible.first().click({ force: true });
-        logConsole(`✅ Click en botón "Iniciar" visible (fallback)`, runId);
+      const fallback = page.locator('input[value="Iniciar"], button:has-text("Iniciar")');
+      await fallback.first().waitFor({ state: "visible", timeout: 15000 }).catch(() => { });
+      if (await fallback.first().isVisible().catch(() => false)) {
+        await fallback.first().click({ force: true });
+        logConsole(`✅ Click visible en botón "Iniciar" (fallback)`, runId);
       } else {
-        logConsole(`⚠️ No se encontró botón "Iniciar" visible ni oculto`, runId);
+        logConsole(`⚠️ No se encontró botón "Iniciar" visible ni oculto, reintentando...`, runId);
+        // 🔁 Reintento: buscar modal visible tras 5 segundos
+        await page.waitForTimeout(5000);
+        const retryBtn = await page.$('xpath=//*[@id="myModal"]//input[@type="submit" or @value="Iniciar"]');
+        if (retryBtn) {
+          await page.evaluate((el) => el.click(), retryBtn);
+          logConsole(`✅ Click en botón "Iniciar" tras reintento`, runId);
+        }
       }
     }
 
-    // 4️⃣ Esperar redirección o forzar regreso
+    // 4️⃣ Esperar redirección de regreso a la tabla principal
     try {
       await page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 180000 });
       logConsole(`↩️ Redirección detectada correctamente a la tabla principal.`, runId);
@@ -855,6 +860,7 @@ async function completarEjecucionManual(page, runId = "GLOBAL") {
     }
 
     await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
+    logConsole(`✅ Tabla principal cargada nuevamente.`, runId);
     await page.waitForTimeout(500);
   } catch (err) {
     logConsole(`⚠️ completarEjecucionManual (forzado DOM): ${err.message}`, runId);
