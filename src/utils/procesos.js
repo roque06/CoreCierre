@@ -662,20 +662,53 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       if (estadoFinal === "ERROR") {
         logConsole(`❌ ${descripcion} finalizó con error.`, runId);
 
-        // 🔎 Monitorear job si hay error
         try {
-          const hayJob = await monitorearF4Job(connectString, baseDatos, runId);
+          // 🔍 Consultar job asociado (solo F4 tiene monitoreo de Oracle)
+          const hayJob = typeof monitorearF4Job === "function"
+            ? await monitorearF4Job(connectString, baseDatos, runId)
+            : false;
+
           if (hayJob) {
-            logConsole("🟡 Job Oracle activo — esperando finalización...", runId);
+            logConsole(`🟡 Job Oracle activo detectado — esperando que finalice...`, runId);
+
+            // Esperar que el job termine (modo bloqueante)
             await monitorearF4Job(connectString, baseDatos, runId, true);
-            logConsole("✅ Job Oracle finalizado, retomando flujo.", runId);
+
+            logConsole(`✅ Job Oracle finalizado correctamente.`, runId);
+
+            // Ejecutar actualización correctiva (pone el proceso en 'T')
+            try {
+              const sql = `
+          UPDATE PA.PA_BITACORA_PROCESO_CIERRE
+             SET ESTATUS='T'
+           WHERE COD_SISTEMA='${sistema}'
+             AND UPPER(DESCRIPCION_PROCESO) LIKE UPPER('%${descripcion}%')
+             AND TRUNC(FECHA) = (
+               SELECT TRUNC(MAX(x.FECHA))
+                 FROM PA.PA_BITACORA_PROCESO_CIERRE x
+                WHERE x.COD_SISTEMA='${sistema}'
+                  AND UPPER(x.DESCRIPCION_PROCESO) LIKE UPPER('%${descripcion}%')
+             )`;
+
+              await fetch("http://127.0.0.1:4000/api/run-script", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ baseDatos, script: "inline", connectString, sqlInline: sql }),
+              });
+
+              logConsole(`🩹 Proceso ${descripcion} actualizado a ESTATUS='T' tras finalizar job.`, runId);
+            } catch (updateErr) {
+              logConsole(`⚠️ Error aplicando actualización a 'T': ${updateErr.message}`, runId);
+            }
+
           } else {
-            logConsole("ℹ️ No se detectaron jobs activos — continúa cierre.", runId);
+            logConsole(`ℹ️ No se detectó job Oracle activo para ${descripcion} — continúa flujo normal.`, runId);
           }
         } catch (e) {
           logConsole(`⚠️ Error monitoreando job Oracle: ${e.message}`, runId);
         }
       }
+
 
       if (estadoFinal === "COMPLETADO") {
         procesosEjecutadosGlobal.set(claveEjec, true);
