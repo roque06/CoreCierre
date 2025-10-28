@@ -2,6 +2,8 @@
 const oracledb = require("oracledb");
 const fs = require("fs");
 const path = require("path");
+const { logConsole, logWeb } = require("./logger.js");
+
 
 // =============================================================
 // 🔧 Inicializar Oracle Instant Client (modo Thick garantizado)
