@@ -802,6 +802,8 @@ async function ejecutarPorHref(page, fullUrl, descripcion, baseDatos, runId = "G
   }
 }
 
+
+
 async function completarEjecucionManual(page, runId = "GLOBAL") {
   try {
     await page.waitForTimeout(1000);
@@ -868,6 +870,7 @@ async function completarEjecucionManual(page, runId = "GLOBAL") {
     logConsole(`⚠️ completarEjecucionManual (error): ${err.message}`, runId);
   }
 }
+
 
 
 
