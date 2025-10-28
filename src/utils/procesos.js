@@ -530,9 +530,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   global.procesosEjecutadosGlobal = procesosEjecutadosGlobal;
   const f4Procesados = new Set();
 
-  // -------------------------------
-  // Helpers
-  // -------------------------------
+  // ============================================================
+  // 🧩 Helper: parsear fechas (tolerante)
+  // ============================================================
   const parseFecha = (txt) => {
     if (!txt) return null;
     const clean = txt.replace(/[–\-\.]/g, "/").trim();
@@ -542,6 +542,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
     return isNaN(date.getTime()) ? null : date;
   };
 
+  // ============================================================
+  // 🧠 Detectar si el proceso F4 tiene una fecha mayor
+  // ============================================================
   async function esF4FechaMayor(descripcionActual, fechaTxt, filasActuales, runId = "GLOBAL") {
     const normalize = (t) =>
       t.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -573,7 +576,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
     }
 
     const fechaMayorGlobal = fechasF4.reduce((a, b) => (a > b ? a : b));
-
     if (actual.getTime() === fechaMayorGlobal.getTime()) {
       guardarFechaF4Persistente(descNorm, fechaTxt);
       logConsole(`📆 [F4] ${descNorm} tiene la FECHA MAYOR (${fechaTxt}) → activar cursol.`, runId);
@@ -587,9 +589,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
     }
   }
 
-  // -------------------------------
-  // Bucle de filas del sistema
-  // -------------------------------
+  // ============================================================
+  // 🚀 Recorrer todas las filas del sistema actual
+  // ============================================================
   let filas = await page.$$("#myTable tbody tr");
 
   for (let i = 0; i < filas.length; i++) {
@@ -606,14 +608,18 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       const claveProc = `${sistema}|${descUpper}`;
       const esCorrerF4 = sistema === "F4" && descUpper.includes("CORRER CALENDARIO");
 
-      // Marcar como “virtual completado” los Correr Calendario que no sean F4 (para no interferir)
-      if (!esCorrerF4 && descUpper.includes("CORRER CALENDARIO") && ["F2", "MTC"].includes(sistema)) {
+      // ============================================================
+      // 🧩 Truco: marcar “Correr Calendario” no F4 como completado virtual
+      // ============================================================
+      if (descUpper.includes("CORRER CALENDARIO") && ["F2", "MTC"].includes(sistema)) {
         logConsole(`⏭️ [Truco] ${sistema} ${descripcion} marcado como completado virtual.`, runId);
-        procesosEjecutadosGlobal.set(claveProc, true);
+        procesosEjecutadosGlobal.set(descripcion.toUpperCase(), true);
         continue;
       }
 
-      // Si está en proceso, esperar normalmente
+      // ============================================================
+      // ⏸️ Si está en proceso, esperar
+      // ============================================================
       if (estado === "EN PROCESO") {
         logConsole(`⏸️ ${descripcion} está en proceso — esperando que finalice.`, runId);
         const resultado = await esperarCompletado(page, descripcion, runId);
@@ -624,13 +630,18 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         continue;
       }
 
-      // IMPORTANTÍSIMO:
-      // Para F4|Correr Calendario en PENDIENTE, NO saltarse por "ya en ejecución",
-      // aunque el mapa tenga la clave marcada por otra ruta.
-      const debeRespetarMapa =
-        !esCorrerF4 || (esCorrerF4 && estado !== "PENDIENTE");
+      // ============================================================
+      // 🚫 NUEVA LÓGICA: control de duplicados inteligente
+      // ============================================================
+      const yaEjecutado = procesosEjecutadosGlobal.has(claveProc);
 
-      if (debeRespetarMapa && procesosEjecutadosGlobal.has(claveProc)) {
+      // Solo saltar si:
+      // - No es "Correr Calendario (F4)", o
+      // - Es "Correr Calendario (F4)" pero ya completado (no PENDIENTE/ERROR)
+      if (
+        yaEjecutado &&
+        (!esCorrerF4 || (esCorrerF4 && !["PENDIENTE", "ERROR"].includes(estado)))
+      ) {
         logConsole(`⏭️ ${descripcion} — ya en ejecución, evitando doble clic.`, runId);
         continue;
       }
@@ -640,9 +651,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
       logConsole(`▶️ [${sistema}] ${descripcion} (${estado}) — Fecha=${fechaTxt}`, runId);
 
-      // ============================
-      // CASO ESPECIAL: F4 Correr Calendario
-      // ============================
+      // ============================================================
+      // 🔸 CASO ESPECIAL: "CORRER CALENDARIO (F4)"
+      // ============================================================
       if (esCorrerF4) {
         logConsole(`🧩 [F4] Manejando caso especial "Correr Calendario"`, runId);
 
@@ -651,18 +662,16 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           const tieneMayor = await esF4FechaMayor(descripcion, fechaTxt, filas, runId);
 
           if (tieneMayor) {
-            // 🔷 Ruta SQL (fecha mayor)
+            // 🟢 RUTA SQL — FECHA MAYOR
             logConsole(`📆 [F4 Fecha Mayor] Ejecutando Correr Calendario vía SQL`, runId);
             const resultadoF4 = await ejecutarF4FechaMayor(page, baseDatos, connectString, runId);
             if (resultadoF4 === "F4_COMPLETADO_MAYOR") {
               estadoNow = await esperarCorrerCalendarioF4(page, baseDatos, connectString, runId);
             }
-            // Solo marcamos como ejecutado si efectivamente corrimos la ruta SQL
             procesosEjecutadosGlobal.set(claveProc, true);
-
           } else {
-            // 🔶 Ruta normal (sin fecha mayor): FORZAR CLIC SIEMPRE
-            logConsole(`🖱️ [F4] Correr Calendario sin fecha mayor → ejecutando clic normal (forzado).`, runId);
+            // 🟠 RUTA NORMAL — SIN FECHA MAYOR
+            logConsole(`🖱️ [F4] Correr Calendario sin fecha mayor → clic normal (forzado).`, runId);
 
             const filaLoc = page.locator(`#myTable tbody tr:has-text("${descripcion}")`);
             let boton = filaLoc.locator('a[href*="ProcesarDirecto"]:has-text("Procesar Directo")');
@@ -681,7 +690,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
             const estadoFinal = await esperarCompletado(page, "Correr Calendario", runId, "F4", connectString, baseDatos);
             logConsole(`📊 [F4] Correr Calendario: estado final = ${estadoFinal}`, runId);
 
-            // Si terminó mal o no cambió, intentamos monitoreo de job para cerrar en 'T'
             if (["ERROR", "N/A", "PENDIENTE"].includes(estadoFinal)) {
               logConsole(`🔍 [F4] Monitoreando Oracle (Correr Calendario estado ${estadoFinal})...`, runId);
               try {
@@ -707,7 +715,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
             }
 
             estadoNow = estadoFinal;
-            // Solo ahora marcamos ejecutado (después del clic + espera)
             procesosEjecutadosGlobal.set(claveProc, true);
           }
 
@@ -719,14 +726,13 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
         } catch (err) {
           logConsole(`⚠️ Error controlado en "Correr Calendario (F4)": ${err.message}`, runId);
-          // No marcamos como ejecutado si falló antes del clic/SQL
           continue;
         }
       }
 
-      // ============================
-      // Caso general
-      // ============================
+      // ============================================================
+      // 🔹 Flujo normal (otros procesos)
+      // ============================================================
       await ejecutarPreScripts(descripcion, baseDatos);
 
       const filaLocator = page.locator("#myTable tbody tr", { hasText: descripcion });
@@ -747,28 +753,23 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       const estadoFinal = await esperarCompletado(page, descripcion, runId);
       logConsole(`📊 ${descripcion}: estado final = ${estadoFinal}`, runId);
 
-      // Solo después de una ejecución válida marcamos como ejecutado
       procesosEjecutadosGlobal.set(claveProc, true);
 
+      // 🧠 Monitoreo Oracle si hay error
       if (sistema === "F4" && estadoFinal === "ERROR") {
-        logConsole(`🔍 [F4] Error detectado → iniciando monitoreo Oracle...`, runId);
-        try {
-          const { monitorearF4Job, runSqlInline } = require("./oracleUtils.js");
-          await monitorearF4Job(connectString, baseDatos, async () => {
-            const updateSQL = `
-              UPDATE PA.PA_BITACORA_PROCESO_CIERRE
-                 SET ESTATUS='T', FECHA_FIN = SYSDATE
-               WHERE COD_SISTEMA='${sistema}'
-                 AND TRUNC(FECHA) = (
-                   SELECT TRUNC(MAX(x.FECHA))
-                     FROM PA.PA_BITACORA_PROCESO_CIERRE x
-                    WHERE x.COD_SISTEMA='${sistema}'
+        const { monitorearF4Job, runSqlInline } = require("./oracleUtils.js");
+        await monitorearF4Job(connectString, baseDatos, async () => {
+          const updateSQL = `
+            UPDATE PA.PA_BITACORA_PROCESO_CIERRE
+               SET ESTATUS='T', FECHA_FIN = SYSDATE
+             WHERE COD_SISTEMA='${sistema}'
+               AND TRUNC(FECHA) = (
+                 SELECT TRUNC(MAX(x.FECHA))
+                   FROM PA.PA_BITACORA_PROCESO_CIERRE x
+                  WHERE x.COD_SISTEMA='${sistema}'
                )`;
-            await runSqlInline(updateSQL, connectString);
-          }, runId);
-        } catch (err) {
-          logConsole(`❌ Error monitoreando Oracle: ${err.message}`, runId);
-        }
+          await runSqlInline(updateSQL, connectString);
+        }, runId);
       }
 
       logConsole(`✅ ${descripcion} completado correctamente.`, runId);
@@ -791,6 +792,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   return "Completado";
 }
+
 
 
 
