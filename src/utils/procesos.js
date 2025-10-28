@@ -554,6 +554,9 @@ async function completarEjecucionManual(page, runId = "GLOBAL") {
   }
 }
 
+// ============================================================
+// ▶️ Ejecutar proceso (versión ajustada con completarEjecucionManual)
+// ============================================================
 async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = "GLOBAL") {
   await page.waitForSelector("#myTable tbody tr");
   logConsole(`▶️ Analizando sistema ${sistema}...`, runId);
@@ -562,7 +565,12 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   global.procesosEjecutadosGlobal = procesosEjecutadosGlobal;
 
   const normalizar = (t) =>
-    (t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toUpperCase();
+    (t || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toUpperCase();
 
   const parseFecha = (txt) => {
     if (!txt) return null;
@@ -613,9 +621,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       // =============================== 🖱️ Click normal ===============================
       const filaExacta = await getFilaExacta(page, sistema, descripcion);
       if (!filaExacta) continue;
-      const botonProcesar = filaExacta.locator(
-        'a:has-text("Procesar Directo"), a[href*="Procesar"], a[onclick*="Procesar"]'
-      ).first();
+      const botonProcesar = filaExacta
+        .locator('a:has-text("Procesar Directo"), a[href*="Procesar"], a[onclick*="Procesar"]')
+        .first();
       if (!(await botonProcesar.count())) continue;
 
       await botonProcesar.click({ force: true });
@@ -633,11 +641,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           logConsole("✅ Click en botón azul 'Procesar Directo'.", runId);
         }
 
-        const btnIniciar = page.locator('xpath=//*[@id="myModal"]/div/div/form/div[2]/input');
-        if (await btnIniciar.count()) {
-          await btnIniciar.click({ force: true });
-          logConsole("✅ Click en botón 'Iniciar' dentro del modal.", runId);
-        }
+        // 🔄 Reemplazo robusto → evita “Element is not visible”
+        await completarEjecucionManual(page, runId);
+
       } catch (e) {
         logConsole(`⚠️ No se detectó modal: ${e.message}`, runId);
       }
@@ -695,6 +701,13 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   return "Completado";
 }
+
+
+
+
+
+
+
 // -- Helpers globales: parseFecha + esF4FechaMayor ---------------------------
 function _parseFechaF4(txt) {
   if (!txt) return null;
