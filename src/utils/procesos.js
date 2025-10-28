@@ -651,8 +651,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       // 🧩 Esperar redirección a pantalla de Ejecución Manual (si aplica)
       // ========================================================
       try {
-        await page.waitForURL(/EjecucionManual/i, { timeout: 15000 });
-        logConsole("📄 Redirección detectada → pantalla de Ejecución Manual.", runId);
+        await page.waitForURL(/(EjecucionManual|ProcesarDirecto)/i, { timeout: 15000 });
+        logConsole("📄 Redirección detectada → pantalla de Ejecución Manual o ProcesarDirecto.", runId);
+
 
         const btnManual = page.locator('button, a').filter({ hasText: /Procesar Directo/i }).first();
         await btnManual.waitFor({ state: "visible", timeout: 10000 });
