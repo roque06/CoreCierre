@@ -109,6 +109,21 @@ async function esperarEstadoTabla(page, descripcion, reintento = 0) {
     return "Desconocido";
   }
 }
+async function leerEstadoExacto(page, codSistema, descripcion) {
+  const filas = await page.$$("#myTable tbody tr");
+  for (const fila of filas) {
+    try {
+      const sis = (await fila.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase())) || "";
+      const desc = (await fila.$eval("td:nth-child(5)", el => el.innerText.trim().toUpperCase())) || "";
+      if (sis === codSistema.toUpperCase() && desc === descripcion.trim().toUpperCase()) {
+        const estado = (await fila.$eval("td:nth-child(10)", el => el.innerText.trim().toUpperCase())) || "";
+        return estado;
+      }
+    } catch { }
+  }
+  return "DESCONOCIDO";
+}
+
 
 module.exports = {
   navegarConRetries,
