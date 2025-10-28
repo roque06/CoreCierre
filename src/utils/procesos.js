@@ -564,7 +564,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   const f4Procesados = new Set();
 
   // ============================================================
-  // 🧩 Helper: parsear fechas (tolerante)
+  // 🧩 Helper: parsear fechas
   // ============================================================
   const parseFecha = (txt) => {
     if (!txt) return null;
@@ -576,7 +576,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   };
 
   // ============================================================
-  // 🧠 Detectar si el proceso F4 tiene una fecha mayor (persistente)
+  // 📆 Detección de “fecha mayor” (solo aplica para F4)
   // ============================================================
   async function esF4FechaMayor(descripcionActual, fechaTxt, filasActuales, runId = "GLOBAL") {
     const normalize = (t) =>
@@ -603,138 +603,48 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       } catch { }
     }
 
-    if (fechasF4.length === 0) {
-      logConsole(`⚠️ [F4] No hay fechas F4 válidas en la tabla.`, runId);
-      return false;
-    }
+    if (fechasF4.length === 0) return false;
 
     const fechaMayorGlobal = fechasF4.reduce((a, b) => (a > b ? a : b));
     if (actual.getTime() === fechaMayorGlobal.getTime()) {
       guardarFechaF4Persistente(descNorm, fechaTxt);
-      logConsole(`📆 [F4] ${descNorm} tiene la FECHA MAYOR (${fechaTxt}) → activar cursol.`, runId);
+      logConsole(`📆 [F4] ${descNorm} tiene la FECHA MAYOR (${fechaTxt}) → ejecutar SQL.`, runId);
       return true;
-    } else {
-      logConsole(
-        `ℹ️ [F4] ${descNorm}: su fecha (${fechaTxt}) no es la mayor (${fechaMayorGlobal.toLocaleDateString("es-ES")}) → continuar flujo normal.`,
-        runId
-      );
-      return false;
     }
+    return false;
   }
 
   // ============================================================
-  // 🚀 Recorrer todas las filas del sistema actual
+  // 🚀 Iterar procesos del sistema
   // ============================================================
   let filas = await page.$$("#myTable tbody tr");
 
   for (let i = 0; i < filas.length; i++) {
     try {
       const fila = filas[i];
-      const sis = (await fila.$eval("td:nth-child(3)", (el) => el.innerText.trim().toUpperCase())) || "";
+      const sis = (await fila.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase())) || "";
       if (sis !== sistema.toUpperCase()) continue;
 
-      const descripcion = (await fila.$eval("td:nth-child(5)", (el) => el.innerText.trim())) || "";
-      const fechaTxt = (await fila.$eval("td:nth-child(7)", (el) => el.innerText.trim())) || "";
-      const estado = ((await fila.$eval("td:nth-child(10)", (el) => el.innerText.trim())) || "").toUpperCase();
-      const descUpper = descripcion.toUpperCase();
-
-      // ============================================================
-      // 🧩 Truco: marcar como completado los “Correr Calendario” no F4
-      // ============================================================
-      if (descUpper.includes("CORRER CALENDARIO") && ["F2", "MTC"].includes(sistema)) {
-        logConsole(`⏭️ [Truco] ${sistema} ${descripcion} forzado a "Completado virtual" — control de flujo.`, runId);
-        procesosEjecutadosGlobal.set(descripcion.toUpperCase(), true);
-        continue;
-      }
-
-      // ============================================================
-      // ⏸️ Esperar si está en proceso
-      // ============================================================
-      if (estado === "EN PROCESO") {
-        logConsole(`⏸️ ${descripcion} está en proceso — esperando que finalice.`, runId);
-        const resultado = await esperarCompletado(page, descripcion, runId);
-        if (resultado === "Error") {
-          logConsole(`❌ ${descripcion} terminó con error — deteniendo ejecución.`, runId);
-          break;
-        }
-        continue;
-      }
+      const descripcion = (await fila.$eval("td:nth-child(5)", el => el.innerText.trim())) || "";
+      const fechaTxt = (await fila.$eval("td:nth-child(7)", el => el.innerText.trim())) || "";
+      const estado = ((await fila.$eval("td:nth-child(10)", el => el.innerText.trim())) || "").toUpperCase();
 
       if (!["PENDIENTE", "ERROR"].includes(estado)) continue;
       if (procesosEjecutadosGlobal.has(descripcion.toUpperCase())) continue;
-      if (sistema === "F4" && f4Procesados.has(descripcion.toUpperCase())) continue;
 
       logConsole(`▶️ [${sistema}] ${descripcion} (${estado}) — Fecha=${fechaTxt}`, runId);
 
       // ============================================================
-      // 🧩 CASO ESPECIAL: "CORRER CALENDARIO (F4)"
-      // ============================================================
-      if (descripcion.toUpperCase().includes("CORRER CALENDARIO") && sistema === "F4") {
-        logConsole(`🧩 [Correr Calendario F4] — tratado como proceso normal`, runId);
-
-        try {
-          // 🔹 Solo usar SQL si tiene fecha mayor
-          const tieneMayor = await esF4FechaMayor(descripcion, fechaTxt, filas, runId);
-          if (tieneMayor) {
-            logConsole(`📆 [F4 Fecha Mayor] Ejecutando Correr Calendario vía SQL`, runId);
-            const resultadoF4 = await ejecutarF4FechaMayor(page, baseDatos, connectString, runId);
-            if (resultadoF4 === "F4_COMPLETADO_MAYOR") {
-              await esperarCorrerCalendarioF4(page, baseDatos, connectString, runId);
-              logConsole(`✅ [F4 Fecha Mayor] "Correr Calendario" completado por SQL`, runId);
-              f4Procesados.add(descripcion.toUpperCase());
-              continue;
-            }
-          }
-
-          // 🔹 Si no tiene fecha mayor → flujo de clics normal
-          const filaLoc = page.locator(`#myTable tbody tr:has-text("${descripcion}")`);
-          let boton = filaLoc.locator('a[href*="ProcesarDirecto"]:has-text("Procesar Directo")');
-          if ((await boton.count()) === 0)
-            boton = filaLoc.locator('a:has-text("Procesar"), button:has-text("Procesar")');
-
-          if (!(await boton.count())) {
-            logConsole(`⚠️ No se encontró botón "Procesar Directo" para ${descripcion}`, runId);
-            continue;
-          }
-
-          await boton.first().scrollIntoViewIfNeeded();
-          await boton.first().click({ force: true });
-          logConsole(`🖱 Click ejecutado en "Correr Calendario (F4)"`, runId);
-
-          await completarEjecucionManual(page, runId);
-          const estadoFinal = await esperarCompletado(page, descripcion, runId);
-          logConsole(`📊 "Correr Calendario": estado final = ${estadoFinal}`, runId);
-
-          // ✅ Solo marcar completado si el DOM realmente cambió a COMPLETADO
-          if (estadoFinal === "COMPLETADO") {
-            procesosEjecutadosGlobal.set(descripcion.toUpperCase(), true);
-            logConsole(`🏁 [F4] "Correr Calendario" marcado como completado.`, runId);
-          } else {
-            logConsole(`⚠️ [F4] "Correr Calendario" sigue en estado ${estadoFinal} — se mantiene pendiente.`, runId);
-          }
-
-          await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
-          await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
-          filas = await page.$$("#myTable tbody tr");
-          continue;
-        } catch (err) {
-          logConsole(`⚠️ Error en "Correr Calendario (F4)": ${err.message}`, runId);
-          continue;
-        }
-      }
-
-      // ============================================================
-      // 🧩 Caso especial F4 (FECHA MAYOR)
+      // 🧠 Si es F4 con fecha mayor → ejecutar SQL en lugar de clic
       // ============================================================
       if (sistema === "F4") {
-        const tieneFechaMayor = await esF4FechaMayor(descripcion, fechaTxt, filas, runId);
-        if (tieneFechaMayor) {
-          logConsole(`📆 [F4] FECHA MAYOR detectada → ejecutando SQL sin clics`, runId);
-          const resultadoF4 = await ejecutarF4FechaMayor(page, baseDatos, connectString, runId);
-          if (resultadoF4 === "F4_COMPLETADO_MAYOR") {
-            f4Procesados.add(descripcion.toUpperCase());
+        const tieneMayor = await esF4FechaMayor(descripcion, fechaTxt, filas, runId);
+        if (tieneMayor) {
+          const resultado = await ejecutarF4FechaMayor(page, baseDatos, connectString, runId);
+          if (resultado === "F4_COMPLETADO_MAYOR") {
+            logConsole(`✅ [F4] ${descripcion} completado vía SQL (fecha mayor).`, runId);
             await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
-            logConsole(`✅ [F4] Flujo FECHA MAYOR completado sin clics`, runId);
+            await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
             filas = await page.$$("#myTable tbody tr");
             continue;
           }
@@ -742,9 +652,10 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       }
 
       // ============================================================
-      // 🔹 Flujo normal (procesos comunes)
+      // 🖱️ Flujo normal — todos los procesos iguales
       // ============================================================
       await ejecutarPreScripts(descripcion, baseDatos);
+
       const filaLocator = page.locator("#myTable tbody tr", { hasText: descripcion });
       let botonProcesar = filaLocator.locator('a[href*="ProcesarDirecto"]:has-text("Procesar Directo")');
       if ((await botonProcesar.count()) === 0)
@@ -757,18 +668,18 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
       await botonProcesar.first().scrollIntoViewIfNeeded();
       await botonProcesar.first().click({ force: true });
-
       logConsole(`🖱️ Click ejecutado en "${descripcion}"`, runId);
 
       await completarEjecucionManual(page, runId);
       const estadoFinal = await esperarCompletado(page, descripcion, runId);
-      logConsole(`📊 ${descripcion}: estado final = ${estadoFinal}`, runId);
 
       if (estadoFinal === "COMPLETADO") {
         procesosEjecutadosGlobal.set(descripcion.toUpperCase(), true);
+        logConsole(`✅ ${descripcion} marcado COMPLETADO.`, runId);
+      } else {
+        logConsole(`⚠️ ${descripcion} quedó en estado ${estadoFinal} — no se marca.`, runId);
       }
 
-      logConsole(`✅ ${descripcion} completado correctamente.`, runId);
       await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
       await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
       filas = await page.$$("#myTable tbody tr");
