@@ -600,11 +600,18 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   const procesosEjecutadosGlobal = global.procesosEjecutadosGlobal || new Map();
   global.procesosEjecutadosGlobal = procesosEjecutadosGlobal;
-  const f4Procesados = new Set();
 
   // ============================================================
-  // 🧩 Helper: parsear fechas
+  // 🧩 Helpers locales
   // ============================================================
+  const normalizar = (t) =>
+    (t || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toUpperCase();
+
   const parseFecha = (txt) => {
     if (!txt) return null;
     const clean = txt.replace(/[–\-\.]/g, "/").trim();
@@ -614,20 +621,42 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
     return isNaN(date.getTime()) ? null : date;
   };
 
-  // ============================================================
-  // 📆 Detección de “fecha mayor” (solo aplica para F4)
-  // ============================================================
-  async function esF4FechaMayor(descripcionActual, fechaTxt, filasActuales, runId = "GLOBAL") {
-    const normalize = (t) =>
-      t.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-        .replace(/\s+/g, " ")
-        .trim()
-        .toUpperCase();
+  async function getFilaExacta(page, sistema, descripcion) {
+    const filas = page.locator("#myTable tbody tr");
+    const total = await filas.count();
+    const sisN = normalizar(sistema);
+    const descN = normalizar(descripcion);
+    for (let i = 0; i < total; i++) {
+      const fila = filas.nth(i);
+      const celdas = fila.locator("td");
+      if ((await celdas.count()) < 10) continue;
+      const sis = normalizar((await celdas.nth(2).innerText()).trim());
+      const desc = normalizar((await celdas.nth(4).innerText()).trim());
+      if (sis === sisN && desc.includes(descN)) return fila;
+    }
+    return null;
+  }
 
-    const descNorm = normalize(descripcionActual);
+  async function leerEstadoExacto(page, sistema, descripcion) {
+    const fila = await getFilaExacta(page, sistema, descripcion);
+    if (!fila) return "DESCONOCIDO";
+    try {
+      const badge = fila.locator("td .badge");
+      const texto = ((await badge.textContent()) || "").trim().toUpperCase();
+      return texto || "DESCONOCIDO";
+    } catch {
+      return "DESCONOCIDO";
+    }
+  }
+
+  // ============================================================
+  // 📆 Detección de “fecha mayor” (solo F4)
+  // ============================================================
+  async function esF4FechaMayor(descripcionActual, fechaTxt, filasActuales) {
+    const descNorm = normalizar(descripcionActual);
     const actual = parseFecha(fechaTxt);
     if (!actual) {
-      logConsole(`⚠️ [F4] ${descNorm}: no tiene fecha válida, se omite comparación.`, runId);
+      logConsole(`⚠️ [F4] ${descNorm}: sin fecha válida, se omite comparación.`, runId);
       return false;
     }
 
@@ -641,12 +670,13 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         if (val) fechasF4.push(val);
       } catch { }
     }
-
     if (fechasF4.length === 0) return false;
 
     const fechaMayorGlobal = fechasF4.reduce((a, b) => (a > b ? a : b));
     if (actual.getTime() === fechaMayorGlobal.getTime()) {
-      guardarFechaF4Persistente(descNorm, fechaTxt);
+      if (typeof guardarFechaF4Persistente === "function") {
+        guardarFechaF4Persistente(descNorm, fechaTxt);
+      }
       logConsole(`📆 [F4] ${descNorm} tiene la FECHA MAYOR (${fechaTxt}) → ejecutar SQL.`, runId);
       return true;
     }
@@ -668,59 +698,105 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       const fechaTxt = (await fila.$eval("td:nth-child(7)", el => el.innerText.trim())) || "";
       const estado = ((await fila.$eval("td:nth-child(10)", el => el.innerText.trim())) || "").toUpperCase();
 
+      // Evita reintentar lo ya marcado globalmente por descripción
       if (!["PENDIENTE", "ERROR"].includes(estado)) continue;
-      if (procesosEjecutadosGlobal.has(descripcion.toUpperCase())) continue;
+      if (procesosEjecutadosGlobal.has(normalizar(descripcion))) continue;
 
       logConsole(`▶️ [${sistema}] ${descripcion} (${estado}) — Fecha=${fechaTxt}`, runId);
 
-      // ============================================================
-      // 🧠 Si es F4 con fecha mayor → ejecutar SQL en lugar de clic
-      // ============================================================
-      if (sistema === "F4") {
-        const tieneMayor = await esF4FechaMayor(descripcion, fechaTxt, filas, runId);
-        if (tieneMayor) {
+      // ========================================================
+      // 🧠 F4 con fecha mayor → ejecutar SQL en lugar de clic
+      // ========================================================
+      if (sistema.toUpperCase() === "F4") {
+        const tieneMayor = await esF4FechaMayor(descripcion, fechaTxt, filas);
+        if (tieneMayor && typeof ejecutarF4FechaMayor === "function") {
           const resultado = await ejecutarF4FechaMayor(page, baseDatos, connectString, runId);
           if (resultado === "F4_COMPLETADO_MAYOR") {
             logConsole(`✅ [F4] ${descripcion} completado vía SQL (fecha mayor).`, runId);
             await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
             await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
             filas = await page.$$("#myTable tbody tr");
+            // No lo marcamos por descripción porque puede haber otras filas F4 con misma desc y otra fecha.
             continue;
           }
         }
       }
 
-      // ============================================================
+      // ========================================================
       // 🖱️ Flujo normal — todos los procesos iguales
-      // ============================================================
-      await ejecutarPreScripts(descripcion, baseDatos);
+      // ========================================================
+      if (typeof ejecutarPreScripts === "function") {
+        await ejecutarPreScripts(descripcion, baseDatos);
+      }
 
-      const filaLocator = page.locator("#myTable tbody tr", { hasText: descripcion });
-      let botonProcesar = filaLocator.locator('a[href*="ProcesarDirecto"]:has-text("Procesar Directo")');
-      if ((await botonProcesar.count()) === 0)
-        botonProcesar = filaLocator.locator('a:has-text("Procesar"), button:has-text("Procesar")');
+      // Fila exacta para evitar confusión de homónimos (p.ej. "Correr Calendario" en otros sistemas)
+      const filaExacta = await getFilaExacta(page, sistema, descripcion);
+      if (!filaExacta) {
+        logConsole(`⚠️ No se encontró la fila exacta para ${sistema} | ${descripcion}`, runId);
+        continue;
+      }
 
-      if ((await botonProcesar.count()) === 0) {
+      let botonProcesar = filaExacta.locator(
+        'a:has-text("Procesar Directo"), a:has-text("PROCESAR DIRECTO"), a[href*="Procesar"], a[onclick*="Procesar"]'
+      ).first();
+
+      if (!(await botonProcesar.count())) {
         logConsole(`⚠️ No se encontró botón Procesar para "${descripcion}"`, runId);
         continue;
       }
 
-      await botonProcesar.first().scrollIntoViewIfNeeded();
-      await botonProcesar.first().click({ force: true });
-      logConsole(`🖱️ Click ejecutado en "${descripcion}"`, runId);
+      await botonProcesar.scrollIntoViewIfNeeded();
+      logConsole(`🖱️ Click en "${descripcion}" (force)`, runId);
+      await botonProcesar.click({ force: true }); // ← clic real compatible con la app【turn2file23】
 
-      await completarEjecucionManual(page, runId);
-      const estadoFinal = await esperarCompletado(page, descripcion, runId);
+      // Confirmar modal (si aparece) con patrón del proyecto【turn2file23】
+      try {
+        await page.waitForSelector(".modal-dialog", { state: "visible", timeout: 15000 });
+        const modal = page.locator(".modal-dialog");
+        await page.locator(".overlay, .loading, .spinner").waitFor({ state: "hidden", timeout: 5000 }).catch(() => { });
+        const posibles = ["Iniciar", "INICIAR", "Aceptar", "ACEPTAR", "Ejecutar", "EJECUTAR", "Procesar"];
+        let botonModal = null;
+        for (const n of posibles) {
+          const cand = modal.getByRole("button", { name: n });
+          if (await cand.count()) { botonModal = cand; break; }
+        }
+        if (!botonModal) {
+          botonModal = modal.locator("button").filter({ hasText: /Iniciar|Aceptar|Ejecutar|Procesar/i }).first();
+        }
+        await botonModal.waitFor({ state: "visible", timeout: 8000 });
+        await botonModal.click({ force: true });
+        logConsole(`☑️ Modal confirmado para ${descripcion}`, runId);
+        await modal.waitFor({ state: "hidden", timeout: 10000 }).catch(() => { });
+      } catch {
+        logConsole(`ℹ️ No se detectó modal para ${descripcion} (posible ejecución directa).`, runId);
+      }
 
-      if (estadoFinal === "COMPLETADO") {
-        procesosEjecutadosGlobal.set(descripcion.toUpperCase(), true);
+      // Espera robusta: badge de la MISMA fila (sistema + descripción)
+      let estadoFinal = "DESCONOCIDO";
+      for (let intento = 0; intento < 60; intento++) {
+        await page.waitForTimeout(1000);
+        const nuevo = await leerEstadoExacto(page, sistema, descripcion);
+        if (["EN PROCESO", "COMPLETADO", "ERROR"].includes(nuevo)) {
+          logConsole(`📊 ${descripcion}: ${estado} → ${nuevo}`, runId);
+          estadoFinal = nuevo;
+          break;
+        }
+      }
+
+      if (estadoFinal === "ERROR") {
+        logConsole(`❌ ${descripcion} finalizó con error.`, runId);
+      } else if (estadoFinal === "COMPLETADO") {
+        procesosEjecutadosGlobal.set(normalizar(descripcion), true);
         logConsole(`✅ ${descripcion} marcado COMPLETADO.`, runId);
       } else {
         logConsole(`⚠️ ${descripcion} quedó en estado ${estadoFinal} — no se marca.`, runId);
       }
 
+      // Volver a la tabla (el spec también lo hace; esto mantiene la coherencia de vuelta)【turn2file18】
       await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
       await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
+
+      // Refrescar referencias de filas y reiniciar índice para re-evaluar
       filas = await page.$$("#myTable tbody tr");
       i = -1;
     } catch (err) {
@@ -736,6 +812,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   return "Completado";
 }
+
 
 
 // =============================================================
