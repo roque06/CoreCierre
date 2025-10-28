@@ -647,14 +647,12 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       await botonProcesar.click({ force: true });
       logConsole(`🖱️ Click en "${descripcion}" (force)`, runId);
 
-      // ========================================================
-      // 🧩 Esperar redirección a pantalla de Ejecución Manual (si aplica)
-      // ========================================================
+      // 🧩 Esperar redirección a pantalla de Ejecución Manual o ProcesarDirecto
       try {
         await page.waitForURL(/(EjecucionManual|ProcesarDirecto)/i, { timeout: 15000 });
         logConsole("📄 Redirección detectada → pantalla de Ejecución Manual o ProcesarDirecto.", runId);
 
-
+        // Intentar clic en botón azul “Procesar Directo”
         const btnManual = page.locator('button, a').filter({ hasText: /Procesar Directo/i }).first();
         await btnManual.waitFor({ state: "visible", timeout: 10000 });
         await btnManual.click({ force: true });
@@ -663,8 +661,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         // ⏳ Pausa corta para permitir arranque real
         await page.waitForTimeout(2000);
       } catch {
-        logConsole("ℹ️ No se detectó redirección a Ejecución Manual (flujo normal).", runId);
+        logConsole("ℹ️ No se detectó redirección a Ejecución Manual o ProcesarDirecto (flujo normal).", runId);
       }
+
 
       // Confirma modal y espera arranque real
       if (typeof completarEjecucionManual === "function") {
