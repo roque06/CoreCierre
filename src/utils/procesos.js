@@ -161,11 +161,7 @@ async function ejecutarPreScripts(descripcion, baseDatos, runId = "GLOBAL") {
   }
 }
 
-// =============================================================
-// 🕒 Esperar hasta completado (robusta y con timeout)
-// =============================================================
-// ⏳ Esperar hasta que un proceso termine (Completado / Error)
-// =============================================================
+
 async function esperarHastaCompletado(page, codSistema, codProceso, descripcion, claveProceso, runId = "GLOBAL") {
   const nombreProc = descripcion || claveProceso;
   logConsole(`⏳ Monitoreando estado de "${nombreProc}" hasta completado...`, runId);
@@ -174,36 +170,21 @@ async function esperarHastaCompletado(page, codSistema, codProceso, descripcion,
   let estadoAnterior = "";
 
   while (true) {
-    await page.waitForTimeout(10000); // 🔁 revisar cada 10s
+    await page.waitForTimeout(10000);
+    const estado = await leerEstadoExacto(page, codSistema, descripcion); // ✅ CAMBIO CLAVE
 
-    let estado = "DESCONOCIDO";
-    try {
-      const filaLocator = page.locator("#myTable tbody tr", { hasText: descripcion });
-      const badgeLocator = filaLocator.locator("td .badge").first();
-      estado = ((await badgeLocator.innerText()) || "").trim().toUpperCase();
-    } catch (err) {
-      logConsole(`⚠️ Error leyendo estado de "${nombreProc}": ${err.message}`, runId);
-      estado = "DESCONOCIDO";
-    }
-
-    // 🔄 Si hay cambio de estado, lo registramos
     if (estado !== estadoAnterior) {
       estadoAnterior = estado;
       logConsole(`📊 ${nombreProc}. ${estado}`, runId);
     }
 
-    // 📈 Evaluar estado
-    if (estado.includes("EN PROCESO") || estado === "DESCONOCIDO") {
-      continue; // sigue esperando indefinidamente
-    }
-
-    if (estado.includes("COMPLETADO")) {
+    if (estado === "EN PROCESO" || estado === "DESCONOCIDO" || estado === "") continue;
+    if (estado === "COMPLETADO") {
       const minutos = ((Date.now() - inicio) / 60000).toFixed(2);
       logConsole(`✅ ${nombreProc}. Completado en ${minutos} minutos`, runId);
       return "Completado";
     }
-
-    if (estado.includes("ERROR")) {
+    if (estado === "ERROR") {
       const minutos = ((Date.now() - inicio) / 60000).toFixed(2);
       logConsole(`❌ ${nombreProc}. Finalizó con error en ${minutos} minutos`, runId);
       return "Error";
