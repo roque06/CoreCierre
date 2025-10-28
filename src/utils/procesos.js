@@ -530,6 +530,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   global.procesosEjecutadosGlobal = procesosEjecutadosGlobal;
   const f4Procesados = new Set();
 
+  // ============================================================
+  // 🧩 Helper: parsear fechas
+  // ============================================================
   const parseFecha = (txt) => {
     if (!txt) return null;
     const clean = txt.replace(/[–\-\.]/g, "/").trim();
@@ -539,6 +542,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
     return isNaN(date.getTime()) ? null : date;
   };
 
+  // ============================================================
+  // 🧩 Determinar si es fecha mayor
+  // ============================================================
   async function esF4FechaMayor(descripcionActual, fechaTxt, filasActuales, runId = "GLOBAL") {
     const normalize = (t) =>
       t.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -586,6 +592,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
     return false;
   }
 
+  // ============================================================
+  // 🔁 Recorrer filas de procesos
+  // ============================================================
   let filas = await page.$$("#myTable tbody tr");
 
   for (let i = 0; i < filas.length; i++) {
@@ -602,19 +611,10 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       const esCorrerCalendarioF4 = sistema === "F4" && descUpper.includes("CORRER CALENDARIO");
       if (procesosEjecutadosGlobal.has(descUpper) && !esCorrerCalendarioF4) continue;
 
-      if (descUpper.includes("CORRER CALENDARIO") && ["F2", "MTC"].includes(sistema)) {
-        logConsole(`⏭️ [Truco] ${sistema} ${descripcion} marcado como completado virtual.`, runId);
-        procesosEjecutadosGlobal.set(descUpper, true);
-        continue;
-      }
-
       if (estado === "EN PROCESO") {
         logConsole(`⏸️ ${descripcion} está en proceso — esperando que finalice.`, runId);
         const resultado = await esperarCompletado(page, descripcion, runId);
-        if (resultado === "Error") {
-          logConsole(`❌ ${descripcion} terminó con error — deteniendo ejecución.`, runId);
-          break;
-        }
+        if (resultado === "Error") break;
         continue;
       }
 
@@ -623,6 +623,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
       logConsole(`▶️ [${sistema}] ${descripcion} (${estado}) — Fecha=${fechaTxt}`, runId);
 
+      // ============================================================
+      // 🧩 CASO ESPECIAL: CORRER CALENDARIO (F4)
+      // ============================================================
       if (esCorrerCalendarioF4) {
         logConsole(`🧩 [F4] Caso especial "Correr Calendario"`, runId);
 
@@ -632,27 +635,33 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           if (tieneMayor) {
             logConsole(`📆 [F4 Fecha Mayor] Ejecutando Correr Calendario vía SQL`, runId);
             const resultadoF4 = await ejecutarF4FechaMayor(page, baseDatos, connectString, runId);
-            if (resultadoF4 === "F4_COMPLETADO_MAYOR") {
+            if (resultadoF4 === "F4_COMPLETADO_MAYOR")
               await esperarCorrerCalendarioF4(page, baseDatos, connectString, runId);
-            }
           } else {
             logConsole(`🖱️ [F4] Correr Calendario sin fecha mayor → flujo normal`, runId);
 
             const filaLoc = page.locator(`#myTable tbody tr:has-text("${descripcion}")`);
-            let boton = filaLoc.locator('a[href*="ProcesarDirecto"]:has-text("Procesar Directo")');
-            if ((await boton.count()) === 0)
+            let boton = filaLoc.locator('a:has-text("Procesar Directo"), button:has-text("Procesar Directo")');
+
+            if (!(await boton.count()))
               boton = filaLoc.locator('a:has-text("Procesar"), button:has-text("Procesar")');
 
             if (await boton.count()) {
               await boton.first().scrollIntoViewIfNeeded();
               await boton.first().click({ force: true });
-              logConsole(`✅ Click en "Procesar Directo" para Correr Calendario`, runId);
+              logConsole(`✅ Click en "Procesar Directo" para abrir ejecución manual`, runId);
+
+              // 🕓 Esperar a que cargue la pantalla de ejecución manual
+              await page.waitForSelector('#myModalAdd, text=Ejecución Manual de Proceso', { timeout: 20000 });
+              logConsole(`📄 Pantalla "Ejecución Manual de Proceso" detectada`, runId);
+
+              // 🧩 Ejecutar clicks en "Procesar Directo" y "Iniciar"
               await completarEjecucionManual(page, runId);
 
               const estadoFinal = await esperarCompletado(page, descripcion, runId, "F4", connectString, baseDatos);
               logConsole(`📊 [F4] Correr Calendario completado (${estadoFinal}) — flujo continúa.`, runId);
             } else {
-              logConsole(`⚠️ No se encontró botón "Procesar" para Correr Calendario`, runId);
+              logConsole(`⚠️ No se encontró botón "Procesar Directo" para Correr Calendario`, runId);
             }
           }
 
@@ -664,6 +673,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         }
       }
 
+      // ============================================================
+      // 🧩 Procesos F4 normales
+      // ============================================================
       if (sistema === "F4") {
         const tieneFechaMayor = await esF4FechaMayor(descripcion, fechaTxt, filas, runId);
         if (tieneFechaMayor) {
@@ -679,13 +691,16 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         }
       }
 
+      // ============================================================
+      // 🧩 Procesos normales (no F4)
+      // ============================================================
       await ejecutarPreScripts(descripcion, baseDatos);
       const filaLocator = page.locator("#myTable tbody tr", { hasText: descripcion });
       let botonProcesar = filaLocator.locator('a[href*="ProcesarDirecto"]:has-text("Procesar Directo")');
-      if ((await botonProcesar.count()) === 0)
+      if (!(await botonProcesar.count()))
         botonProcesar = filaLocator.locator('a:has-text("Procesar"), button:has-text("Procesar")');
 
-      if ((await botonProcesar.count()) === 0) {
+      if (!(await botonProcesar.count())) {
         logConsole(`⚠️ No se encontró botón Procesar para "${descripcion}"`, runId);
         continue;
       }
@@ -710,8 +725,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   return "Completado";
 }
-
-
 
 
 
