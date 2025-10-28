@@ -806,7 +806,7 @@ async function completarEjecucionManual(page, runId = "GLOBAL") {
   try {
     await page.waitForTimeout(1000);
 
-    // 1️⃣ Click en "Procesar Directo" (botón superior)
+    // 🔹 Paso 1: intentar click en botón superior "Procesar Directo"
     const btnProcesar = page.locator('button:has-text("Procesar Directo"), input[value="Procesar Directo"]');
     if (await btnProcesar.first().isVisible().catch(() => false)) {
       await btnProcesar.first().click({ force: true });
@@ -814,38 +814,41 @@ async function completarEjecucionManual(page, runId = "GLOBAL") {
       await page.waitForTimeout(1000);
     }
 
-    // 2️⃣ Click forzado en modal clásico (#myModalAdd)
+    // 🔹 Paso 2: esperar si hay modales clásicos
     const modalAdd = page.locator("#myModalAdd");
+    const modal = page.locator("#myModal");
+
     if (await modalAdd.isVisible().catch(() => false)) {
       await modalAdd.click({ force: true });
       logConsole(`✅ Click en #myModalAdd (Procesar Directo clásico)`, runId);
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(800);
     }
 
-    // 3️⃣ Forzar botón "Iniciar" (visible u oculto)
-    let btnIniciar = await page.$('xpath=//*[@id="myModal"]//input[@type="submit" or @value="Iniciar"]');
+    // 🔹 Paso 3: detectar y forzar el botón Iniciar (en cualquiera de los 3 casos)
+    let btnIniciar =
+      (await page.$('xpath=//*[@id="myModal"]//input[@type="submit" or @value="Iniciar"]')) ||
+      (await page.$('xpath=//*[@id="myModalAdd"]//input[@type="submit" or @value="Iniciar"]')) ||
+      (await page.$('input[type="submit"][value="Iniciar"], button:has-text("Iniciar")'));
+
     if (btnIniciar) {
       await page.evaluate((el) => el.click(), btnIniciar);
-      logConsole(`✅ Click forzado en botón "Iniciar" (modal oculto)`, runId);
+      logConsole(`✅ Click forzado en botón "Iniciar" (detectado en DOM)`, runId);
     } else {
-      const fallback = page.locator('input[value="Iniciar"], button:has-text("Iniciar")');
-      await fallback.first().waitFor({ state: "visible", timeout: 15000 }).catch(() => { });
-      if (await fallback.first().isVisible().catch(() => false)) {
-        await fallback.first().click({ force: true });
-        logConsole(`✅ Click visible en botón "Iniciar" (fallback)`, runId);
+      // 🔁 Reintento si el botón tarda en aparecer
+      logConsole(`⚠️ No se encontró botón "Iniciar" visible — reintentando en 5s...`, runId);
+      await page.waitForTimeout(5000);
+      btnIniciar =
+        (await page.$('input[type="submit"][value="Iniciar"], button:has-text("Iniciar")')) ||
+        (await page.$('xpath=//*[@id="myModal"]//input[@type="submit" or @value="Iniciar"]'));
+      if (btnIniciar) {
+        await page.evaluate((el) => el.click(), btnIniciar);
+        logConsole(`✅ Click en botón "Iniciar" tras reintento`, runId);
       } else {
-        logConsole(`⚠️ No se encontró botón "Iniciar" visible ni oculto, reintentando...`, runId);
-        // 🔁 Reintento: buscar modal visible tras 5 segundos
-        await page.waitForTimeout(5000);
-        const retryBtn = await page.$('xpath=//*[@id="myModal"]//input[@type="submit" or @value="Iniciar"]');
-        if (retryBtn) {
-          await page.evaluate((el) => el.click(), retryBtn);
-          logConsole(`✅ Click en botón "Iniciar" tras reintento`, runId);
-        }
+        logConsole(`❌ No se encontró botón "Iniciar" ni tras reintento`, runId);
       }
     }
 
-    // 4️⃣ Esperar redirección de regreso a la tabla principal
+    // 🔹 Paso 4: esperar redirección a la tabla principal
     try {
       await page.waitForURL(/ProcesoCierre\/Procesar$/i, { timeout: 180000 });
       logConsole(`↩️ Redirección detectada correctamente a la tabla principal.`, runId);
@@ -863,6 +866,7 @@ async function completarEjecucionManual(page, runId = "GLOBAL") {
     logConsole(`⚠️ completarEjecucionManual (forzado DOM): ${err.message}`, runId);
   }
 }
+
 
 
 
