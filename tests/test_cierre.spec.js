@@ -216,13 +216,60 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   // ============================================================
   // 🧾 RESUMEN FINAL
   // ============================================================
+  // ============================================================
+  // 🧾 RESUMEN FINAL (FORMATO LEGIBLE + ARCHIVO LOG)
+  // ============================================================
   const totalMin = ((Date.now() - inicioCierre) / 60000).toFixed(2);
+
+  logConsole("==========================================", runId);
+  logConsole("📊 RESUMEN FINAL DEL CIERRE", runId);
+  logConsole("==========================================", runId);
+  logConsole(`🗓 Fecha de ejecución real: ${new Date().toLocaleString("es-VE")}`, runId);
+  logConsole(`🧩 Instancia ejecutada: ${baseDatos}`, runId);
+  logConsole(`🌐 Ambiente: ${ambiente}`, runId);
+  logConsole("------------------------------------------", runId);
+
+  for (const p of resumen.detalle) {
+    const icon =
+      p.estado.toLowerCase().includes("completado") ? "✅" :
+        p.estado.toLowerCase().includes("error") ? "❌" : "⏭️";
+    logConsole(`${icon} [${p.sistema}] ${p.descripcion} → ${p.estado} | ⏱ ${p.duracion}`, runId);
+  }
+
+  logConsole("------------------------------------------", runId);
+  logConsole(`📊 Total procesos ejecutados: ${resumen.total}`, runId);
+  logConsole(`✅ Completados: ${resumen.completados}`, runId);
+  logConsole(`❌ Errores: ${resumen.errores}`, runId);
+  logConsole("------------------------------------------", runId);
+  logConsole(`🕒 Tiempo total transcurrido: ${totalMin} min`, runId);
   logConsole("==========================================", runId);
   logConsole(`✅ Cierre completado según configuración (${totalMin} min)`, runId);
-  fs.writeFileSync(
-    path.join(__dirname, `../logs/resumen_cierre_${baseDatos}_${new Date().toISOString().slice(0, 10)}.log`),
-    JSON.stringify(resumen, null, 2)
-  );
+
+  // 📝 Guardar también en archivo de texto plano
+  const resumenTxt = [
+    "==========================================",
+    "📊 RESUMEN FINAL DEL CIERRE",
+    "==========================================",
+    `🗓 Fecha: ${new Date().toLocaleString("es-VE")}`,
+    `🧩 Base de Datos: ${baseDatos}`,
+    `🌐 Ambiente: ${ambiente}`,
+    "------------------------------------------",
+    ...resumen.detalle.map(
+      p => `${p.estado === "Completado" ? "✅" : "❌"} [${p.sistema}] ${p.descripcion} → ${p.estado} | ${p.duracion}`
+    ),
+    "------------------------------------------",
+    `Completados: ${resumen.completados} / ${resumen.total}`,
+    `Errores: ${resumen.errores}`,
+    `🕒 Total: ${totalMin} min`,
+    "=========================================="
+  ].join("\n");
+
+  const carpetaLogs = path.join(__dirname, "../logs");
+  if (!fs.existsSync(carpetaLogs)) fs.mkdirSync(carpetaLogs);
+  const nombreArchivo = `resumen_cierre_${baseDatos}_${new Date().toISOString().slice(0, 10)}.log`;
+  fs.writeFileSync(path.join(carpetaLogs, nombreArchivo), resumenTxt, "utf-8");
+  logConsole(`📝 Archivo .log generado: logs/${nombreArchivo}`, runId);
+
 
   await browser.close();
 });
