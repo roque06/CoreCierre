@@ -47,10 +47,12 @@ try {
     estadoPersistente = JSON.parse(fs.readFileSync(cachePath, "utf-8"));
   }
   // 🧹 Limpieza por base de datos (evita acumulación)
-  if (estadoPersistente[baseDatos]) {
-    logConsole(`🧹 Limpiando estados anteriores de ${baseDatos}`, runId);
-    delete estadoPersistente[baseDatos];
+  // 🧹 Limpieza selectiva: solo elimina procesos completados
+  if (!estadoPersistente[baseDatos]) estadoPersistente[baseDatos] = {};
+  for (const [desc, estado] of Object.entries(estadoPersistente[baseDatos])) {
+    if (estado === "COMPLETADO") delete estadoPersistente[baseDatos][desc];
   }
+
 } catch {
   estadoPersistente = {};
 }
