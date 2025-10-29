@@ -38,7 +38,9 @@ if (!conexion) {
 }
 const connectString = conexion.connectString;
 
-// --- RUTA Y CONTROL DE ESTADO PERSISTENTE ---
+// ============================================================
+// 🧩 RUTA Y CONTROL DE ESTADO PERSISTENTE
+// ============================================================
 const cachePath = path.join(__dirname, "../src/cache/estado_persistente.json");
 let estadoPersistente = {};
 
@@ -46,31 +48,35 @@ try {
   if (fs.existsSync(cachePath)) {
     estadoPersistente = JSON.parse(fs.readFileSync(cachePath, "utf-8"));
   }
-  // 🧹 Limpieza por base de datos (evita acumulación)
+
   // 🧹 Limpieza selectiva: solo elimina procesos completados
   if (!estadoPersistente[baseDatos]) estadoPersistente[baseDatos] = {};
   for (const [desc, estado] of Object.entries(estadoPersistente[baseDatos])) {
     if (estado === "COMPLETADO") delete estadoPersistente[baseDatos][desc];
   }
 
+  logConsole(`🧩 Estado persistente cargado para ${baseDatos}`, runId);
 } catch {
   estadoPersistente = {};
+  logConsole(`⚠️ No se pudo leer estado persistente, se iniciará limpio.`, runId);
 }
 
-estadoPersistente[baseDatos] = {}; // Inicializa estructura limpia
-
+// 🧾 Guardar cambios de estado persistente
 function actualizarEstadoPersistente(descripcion, estado) {
+  if (!estadoPersistente[baseDatos]) estadoPersistente[baseDatos] = {};
   estadoPersistente[baseDatos][descripcion] = estado;
   fs.writeFileSync(cachePath, JSON.stringify(estadoPersistente, null, 2));
 }
 
-// --- Orden de ejecución ---
+// ============================================================
+// 🔄 Configuración general
+// ============================================================
 const ordenSistemas = ["PRE", "F2", "MTC", "F3", "MON", "F4", "F5", "F8", "FIN"];
 const resumen = { total: 0, completados: 0, errores: 0, detalle: [] };
 const inicioCierre = Date.now();
 const fechaInicioCierre = new Date();
 
-// --- Helper ---
+// Helper
 function parseFechaDMY(fechaTxt) {
   const [d, m, y] = fechaTxt.split("/").map(Number);
   return new Date(y, m - 1, d);
@@ -81,11 +87,13 @@ function parseFechaDMY(fechaTxt) {
 // ============================================================
 test(`[${runId}] Cierre con selección de sistemas`, async () => {
   test.setTimeout(0);
+
   const browser = await chromium.launch({
     channel: "msedge",
     headless: false,
     args: ["--start-maximized", "--disable-infobars", "--no-default-browser-check"],
   });
+
   const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: null });
   const page = await context.newPage();
 
@@ -103,6 +111,9 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   global.__sistemasActivos = procesos.map(p => p.toUpperCase());
   logConsole(`📄 Sistemas activos definidos: ${global.__sistemasActivos.join(", ")}`, runId);
 
+  // ============================================================
+  // 🔁 Bucle principal
+  // ============================================================
   while (true) {
     const filas = page.locator("tbody tr");
     const total = await filas.count();
@@ -137,6 +148,9 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
       ultimoSistemaLogueado = sistemaActivo;
     }
 
+    // ============================================================
+    // ▶️ Procesamiento de filas
+    // ============================================================
     for (let i = 0; i < total; i++) {
       const fila = filas.nth(i);
       const celdas = fila.locator("td");
@@ -145,24 +159,22 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
       const fecha = (await celdas.nth(6).innerText().catch(() => "")).trim();
       const estado = (await celdas.nth(9).innerText().catch(() => "")).trim();
 
-      // 🔒 Control: si hay algún proceso EN PROCESO, espera su finalización antes de continuar
+      // 🔒 Control: si hay un proceso EN PROCESO visible
       if (estado.toUpperCase() === "EN PROCESO") {
         logConsole(`⏳ ${descripcion} está EN PROCESO — esperando finalización antes de continuar...`, runId);
         await esperarCompletado(page, descripcion);
         logConsole(`✅ ${descripcion} finalizó — continuando con el siguiente proceso.`, runId);
-        // Refresca la tabla después de completar
         await navegarConRetries(page, `${ambiente.replace(/\/$/, "")}/ProcesoCierre/Procesar`);
         encontrado = true;
         break;
       }
-
 
       if (sistema !== sistemaActivo) continue;
 
       // --- Control persistente ---
       const estadoPrevio = estadoPersistente[baseDatos][descripcion];
       if (estadoPrevio === "EN PROCESO") {
-        logConsole(`⏳ ${descripcion} sigue "En Proceso" (esperando finalización)...`, runId);
+        logConsole(`⏳ ${descripcion} sigue "En Proceso" (persistente) — esperando finalización...`, runId);
         await esperarCompletado(page, descripcion);
         continue;
       }
@@ -171,6 +183,7 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
 
       if (["Pendiente", "Error"].includes(estado)) {
         actualizarEstadoPersistente(descripcion, "EN PROCESO");
+
         const inicio = Date.now();
         const resultado = await ejecutarProceso(page, sistema, baseDatos, connectString, runId);
         await esperarCompletado(page, descripcion);
@@ -193,7 +206,9 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
     if (!encontrado) await page.waitForTimeout(3000);
   }
 
-  // --- Resumen final ---
+  // ============================================================
+  // 🧾 RESUMEN FINAL
+  // ============================================================
   const totalMin = ((Date.now() - inicioCierre) / 60000).toFixed(2);
   logConsole("==========================================", runId);
   logConsole(`✅ Cierre completado según configuración (${totalMin} min)`, runId);
