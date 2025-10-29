@@ -39,7 +39,7 @@ if (!conexion) {
 const connectString = conexion.connectString;
 
 // --- Orden de ejecución ---
-const ordenSistemas = ["PRE", "F2", "MTC", "F3", "MON", "F4", "F5", "FIN"];
+const ordenSistemas = ["PRE", "F2", "MTC", "F3", "MON", "F4", "F5", "F8", "FIN"];
 
 // --- Estructura resumen ---
 const resumen = { total: 0, completados: 0, errores: 0, detalle: [] };
