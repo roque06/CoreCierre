@@ -143,6 +143,18 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
       const fecha = (await celdas.nth(6).innerText().catch(() => "")).trim();
       const estado = (await celdas.nth(9).innerText().catch(() => "")).trim();
 
+      // 🔒 Control: si hay algún proceso EN PROCESO, espera su finalización antes de continuar
+      if (estado.toUpperCase() === "EN PROCESO") {
+        logConsole(`⏳ ${descripcion} está EN PROCESO — esperando finalización antes de continuar...`, runId);
+        await esperarCompletado(page, descripcion);
+        logConsole(`✅ ${descripcion} finalizó — continuando con el siguiente proceso.`, runId);
+        // Refresca la tabla después de completar
+        await navegarConRetries(page, `${ambiente.replace(/\/$/, "")}/ProcesoCierre/Procesar`);
+        encontrado = true;
+        break;
+      }
+
+
       if (sistema !== sistemaActivo) continue;
 
       // --- Control persistente ---
