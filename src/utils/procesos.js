@@ -129,6 +129,8 @@ const preScripts = {
   "RENOVACIÓN DE TARJETAS": ["reset_tarjetas.sql"],
   "GENERACION SALDOS CONTABILIZADOS": ["Prey.sql"],
   "CARGA MAESTRO TARJETA DE CRÉDITO ITC": ["mtc2.sql"],
+  "CARGA TRANSACCIONES DIARIAS ITC": ["mtc3.sql"],
+
 
 
 };
