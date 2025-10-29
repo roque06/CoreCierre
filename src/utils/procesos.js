@@ -621,6 +621,10 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   const procesosEjecutadosGlobal = global.procesosEjecutadosGlobal || new Map();
   global.procesosEjecutadosGlobal = procesosEjecutadosGlobal;
 
+  // 🧩 Nuevo registro de fallos global (evita reintentos o doble clic)
+  const procesosFallidosGlobal = global.procesosFallidosGlobal || new Set();
+  global.procesosFallidosGlobal = procesosFallidosGlobal;
+
   const normalizar = (t) =>
     (t || "")
       .normalize("NFD")
@@ -656,6 +660,14 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       const claveEjec = buildClaveProceso(sistema, descripcion, fechaTxt);
 
       // ============================================================
+      // 🚫 Evitar reintento si ya falló anteriormente
+      // ============================================================
+      if (procesosFallidosGlobal.has(claveEjec)) {
+        logConsole(`🚫 ${descripcion} ya falló previamente — no se reintentará.`, runId);
+        continue;
+      }
+
+      // ============================================================
       // 🧠 Reanudar si estaba "EN PROCESO" al reiniciar (por cache)
       // ============================================================
       const estadoPrevio = cacheEstado[baseDatos][claveEjec];
@@ -668,9 +680,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           guardarCacheEstado(cacheEstado);
           continue;
         } else if (resultadoReanudo === "Error") {
-          // Si reanudó y terminó en ERROR, aplicamos la misma política de no reintento.
           cacheEstado[baseDatos][claveEjec] = "ERROR";
           guardarCacheEstado(cacheEstado);
+          procesosFallidosGlobal.add(claveEjec);
           logConsole(`❌ ${descripcion} terminó en ERROR tras reanudación — no se reintenta.`, runId);
           continue;
         }
@@ -689,10 +701,10 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
       // ============================================================
       // ❌ Si está en ERROR, NO reintentar clic (Regla 6)
-      //    → verificar job; si no hay, seguir el flujo.
       // ============================================================
       if (estado === "ERROR") {
         logConsole(`❌ ${descripcion} se encuentra en ERROR — política: no reintentar.`, runId);
+        procesosFallidosGlobal.add(claveEjec); // 🔒 bloqueo global de reintento
         try {
           const hayJob = typeof monitorearF4Job === "function"
             ? await monitorearF4Job(connectString, baseDatos, runId)
@@ -724,7 +736,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         } catch (e) {
           logConsole(`⚠️ Error monitoreando job Oracle: ${e.message}`, runId);
         }
-        continue; // NO clic; se sigue el flujo
+        continue; // 🚫 sin clic; se sigue el flujo
       }
 
       // A partir de aquí, solo consideramos ejecutar cuando está PENDIENTE
@@ -735,7 +747,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
       logConsole(`▶️ [${sistema}] ${descripcion} (${estado}) — Fecha=${fechaTxt}`, runId);
 
-      // =============================== ⚙️ Pre-Scripts (solo si PENDIENTE) ===============================
+      // =============================== ⚙️ Pre-Scripts ===============================
       if (typeof ejecutarPreScripts === "function") {
         try {
           await ejecutarPreScripts(descripcion, baseDatos, runId);
@@ -745,7 +757,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         }
       }
 
-      // =============================== 🧠 F4 Fecha Mayor (si aplica) ===============================
+      // =============================== 🧠 F4 Fecha Mayor ===============================
       if (sistema.toUpperCase() === "F4" && typeof ejecutarF4FechaMayor === "function") {
         const filasAct = await page.$$("#myTable tbody tr");
         const tieneMayor = await esF4FechaMayor(descripcion, fechaTxt, filasAct);
@@ -762,7 +774,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         }
       }
 
-      // =============================== 🖱️ Click normal (solo PENDIENTE) ===============================
+      // =============================== 🖱️ Click normal ===============================
       const filaExacta = await getFilaExacta(page, sistema, descripcion);
       if (!filaExacta) continue;
       const botonProcesar = filaExacta
@@ -770,7 +782,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         .first();
       if (!(await botonProcesar.count())) continue;
 
-      procesosEjecutadosGlobal.set(claveEjec, true); // marca para evitar doble clic
+      procesosEjecutadosGlobal.set(claveEjec, true);
       cacheEstado[baseDatos][claveEjec] = "EN PROCESO";
       guardarCacheEstado(cacheEstado);
 
@@ -807,7 +819,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
             logConsole(`📄 ${descripcion}: estado actual = ${nuevo}`, runId);
           }
 
-          // 🧩 Guardar en cache cuando entra en proceso
           if (nuevo === "EN PROCESO") {
             cacheEstado[baseDatos][claveEjec] = "EN PROCESO";
             guardarCacheEstado(cacheEstado);
@@ -835,6 +846,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       // =============================== ⚠️ Manejo de ERROR con job ===============================
       if (estadoFinal === "ERROR") {
         logConsole(`❌ ${descripcion} finalizó con error.`, runId);
+        procesosFallidosGlobal.add(claveEjec); // 🧩 bloquear reintento futuro
         try {
           const hayJob = typeof monitorearF4Job === "function"
             ? await monitorearF4Job(connectString, baseDatos, runId)
@@ -888,7 +900,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   return "Completado";
 }
-
 
 
 
