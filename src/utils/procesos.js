@@ -112,31 +112,22 @@ async function pedirScript(script, baseDatos, runId = "GLOBAL") {
 }
 
 const preScripts = {
-  // 🔹 F2
+  "CARGA LINEA DIFERIDA ITC": ["estadoMtc.sql"],
   "CIERRE DIARIO DE BANCOS": ["RestestatusF2.sql"],
-
-  // 🔹 F3
+  "CAMBIO SECTOR CONTABLE": ["Cambio_Sector.sql"],
   "PROVISION DE INTERESES PRESTAMOS": ["ResetEstatuiF3.sql", "PreF3.sql", "EliminarF3.sql"],
-  "CLASIFICACION DE SALDOS DE PRESTAMOS": ["RestF3.sql"],
-
-  // 🔹 F4
   "LIBERACION DE EMBARGOS, CONGELAMIENTOS Y CONSULTAS": ["ResetEstatusF4.sql"],
+  "CIERRE DIARIO DIVISAS": ["Fix_Cierre_Divisas.sql", "resetEstatusF5.sql", "Prey.sql"],
+  "CLASIFICACION DE SALDOS DE PRESTAMOS": ["RestF3.sql"],
   "CIERRE DIARIO CUENTA EFECTIVO": ["pre-f4.sql"],
   "CIERRE DIARIO CAJA (ATM)": ["cerrar_caja.sql"],
   "GENERAR ASIENTOS PESO IMPUESTOS MONEDA EXTRANJERA": ["cerrar_caja.sql"],
-  "GENERACION SALDOS CONTABILIZADOS": ["Prey.sql"],
-
-  // 🔹 F5
-  "CIERRE DIARIO DIVISAS": ["Fix_Cierre_Divisas.sql", "resetEstatusF5.sql"],
   "ACTUALIZA VISTA MATERIALIZADA PLAN PAGO DWH": [
-    "Reset_multi.sql",
-    "Activa_multiUser.sql",
-    "Actualiza_multiuser.sql",
+    "Actualiza_multiuser.sql", "Reset_multi.sql", "Activa_multiuser.sql",
   ],
+  "APLICACIÓN DE TRANSFERENCIAS AUTOMÁTICAS": ["fix_pre.sql"],
+  "RENOVACIÓN DE TARJETAS": ["reset_tarjetas.sql"],
 
-  // 🔹 Otros sistemas o utilitarios
-  "CAMBIO SECTOR CONTABLE": ["Cambio_Sector.sql"],
-  "CARGA LINEA DIFERIDA ITC": ["estadoMtc.sql"],
 };
 
 // ============================================================
