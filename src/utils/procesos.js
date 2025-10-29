@@ -359,7 +359,34 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         const codProceso = href.match(/CodProceso=([^&]+)/i)?.[1] || "0";
         const claveProc = `${codSistema}-${codProceso}`;
 
+        // 🧩 BLOQUE NUEVO: Actualizar estatus antes de Correr Calendario
         if (descripcion.toUpperCase().includes("CORRER CALENDARIO")) {
+          try {
+            const sqlUpdateGlobal = `
+              UPDATE PA.PA_BITACORA_PROCESO_CIERRE
+                 SET ESTATUS='T'
+               WHERE COD_SISTEMA='F4'
+                 AND COD_PROCESO <> 17
+            `;
+            logConsole("📦 Ejecutando SQL correctivo previo al proceso 'Correr Calendario' (F4 Fecha Mayor)...", runId);
+
+            await fetch("http://127.0.0.1:4000/api/run-script", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                baseDatos,
+                script: "inline",
+                connectString,
+                sqlInline: sqlUpdateGlobal,
+              }),
+            });
+
+            logConsole("✅ Actualización de estatus F4 global ejecutada correctamente (excepto proceso 17).", runId);
+          } catch (err) {
+            logConsole(`❌ Error ejecutando SQL correctivo previo al calendario: ${err.message}`, runId);
+          }
+
+          // 🔹 Ejecución original del bloque “Correr Calendario”
           logConsole(`🧩 [F4 Fecha Mayor] Correr Calendario detectado → forzando estado 'P'`, runId);
 
           const updateSQL = `
