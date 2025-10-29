@@ -181,9 +181,8 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
 
       logConsole(`• ${sistema} | ${descripcion} | Estado=${estado} | Fecha=${fecha}`, runId);
 
-      if (["Pendiente", "Error"].includes(estado)) {
+      if (estado === "Pendiente") {
         actualizarEstadoPersistente(descripcion, "EN PROCESO");
-
         const inicio = Date.now();
         const resultado = await ejecutarProceso(page, sistema, baseDatos, connectString, runId);
         await esperarCompletado(page, descripcion);
@@ -201,6 +200,14 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
         encontrado = true;
         break;
       }
+
+      if (estado === "Error") {
+        // ❌ No reintentar: cumplir la regla 6 (si no hay job, seguir de largo)
+        logConsole(`❌ ${descripcion} está en ERROR — sin job activo, se continúa sin reintentar.`, runId);
+        // (Opcional) aquí podrías invocar una verificación de job si la tienes expuesta.
+        continue;
+      }
+
     }
 
     if (!encontrado) await page.waitForTimeout(3000);
