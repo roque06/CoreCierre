@@ -128,7 +128,7 @@ const preScripts = {
   "APLICACIÓN DE TRANSFERENCIAS AUTOMÁTICAS": ["fix_pre.sql"],
   "RENOVACIÓN DE TARJETAS": ["reset_tarjetas.sql"],
   "GENERACION SALDOS CONTABILIZADOS": ["Prey.sql"],
-  "CARGA MAESTRO TARJETA DE CRÉDITO ITC": ["mtc2.sql"],
+  "CARGA MAESTRO TARJETA DE CRÉDITO ITC": ["mtc1.sql", "mtc2.sql", "mtc4.sql", "mtc5.sql"],
   "CARGA TRANSACCIONES DIARIAS ITC": ["mtc3.sql"],
 
 
