@@ -113,9 +113,6 @@ async function pedirScript(script, baseDatos, runId = "GLOBAL") {
 
 const preScripts = {
   // 🔹 F2
-  "PROCESO LIQUIDACION PAGATODO": ["estadoMtc.sql"],
-  "RECTIFICACION PROCESOS": ["rectificar.sql"],
-  "LIQUIDACION PAGOS SERVICIOS": ["ResetestatusF2.sql"],
   "CIERRE DIARIO DE BANCOS": ["RestestatusF2.sql"],
 
   // 🔹 F3
