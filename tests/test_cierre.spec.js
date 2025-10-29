@@ -79,7 +79,7 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   let ultimoSistemaLogueado = null;
 
   // ============================================================
-  // 🧩 Registrar los sistemas activos seleccionados (nuevo)
+  // 🧩 Registrar los sistemas activos seleccionados
   // ============================================================
   global.__sistemasActivos = procesos.map(p => p.toUpperCase());
   logConsole(`📄 Sistemas activos definidos: ${global.__sistemasActivos.join(", ")}`, runId);
@@ -216,7 +216,7 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   }
 
   // ============================================================
-  // 🧾 Resumen Final del Cierre
+  // 🧾 Resumen Final del Cierre (actualizado con todos los procesos)
   // ============================================================
   const duracionTotal = ((Date.now() - inicioCierre) / 60000).toFixed(2);
   const fechaEjecucion = new Date().toLocaleString("es-VE", {
@@ -257,12 +257,26 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   });
   resumenFinal.push("------------------------------------------");
 
+  // --- Agrupar procesos por sistema ---
+  const agrupado = {};
   for (const p of resumen.detalle) {
-    const icon = p.estado === "Completado" ? "✅" : p.estado === "Error" ? "❌" : "⏭️";
-    resumenFinal.push(`${icon} [${p.sistema}] ${p.descripcion} → ${p.estado} (Duración: ${p.duracion})`);
+    if (!agrupado[p.sistema]) agrupado[p.sistema] = [];
+    agrupado[p.sistema].push(p);
   }
 
-  resumenFinal.push("------------------------------------------");
+  // --- Mostrar todos los procesos ejecutados ---
+  Object.keys(agrupado).forEach((sistema) => {
+    resumenFinal.push(`📦 ${sistema} — ${agrupado[sistema].length} procesos ejecutados:`);
+    agrupado[sistema].forEach((p) => {
+      const icon =
+        p.estado === "Completado" ? "✅" :
+          p.estado === "Error" ? "❌" :
+            "⏭️";
+      resumenFinal.push(`${icon} [${p.sistema}] ${p.descripcion} → ${p.estado} (Duración: ${p.duracion})`);
+    });
+    resumenFinal.push("------------------------------------------");
+  });
+
   resumenFinal.push(`🕒 TOTAL TIEMPO TRANSCURRIDO: ${duracionTotal} min`);
   resumenFinal.push("==========================================");
 
