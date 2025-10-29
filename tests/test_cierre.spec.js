@@ -44,6 +44,7 @@ const ordenSistemas = ["PRE", "F2", "MTC", "F3", "MON", "F4", "F5", "FIN"];
 // --- Estructura resumen ---
 const resumen = { total: 0, completados: 0, errores: 0, detalle: [] };
 const inicioCierre = Date.now();
+const fechaInicioCierre = new Date(); // 🕒 Captura la hora real de inicio del cierre
 
 // --- Helper functions ---
 function parseFechaDMY(fechaTxt) {
@@ -166,7 +167,7 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
 
           if (fechaActual.getTime() === fechaMayor.getTime()) {
             logConsole(`📆 Detectada nueva fecha (${fecha}) → Activando flujo F4 Fecha Mayor`, runId);
-            await ejecutarF4FechaMayor(page, baseDatos, connectString, runId); // ✅ llamada correcta
+            await ejecutarF4FechaMayor(page, baseDatos, connectString, runId);
             encontrado = true;
             break;
           } else {
@@ -178,7 +179,6 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
       logWeb(`• ${sistema} | ${descripcion} | Estado=${estado} | Fecha=${fecha}`, runId);
       logConsole(`• ${sistema} | ${descripcion} | Estado=${estado} | Fecha=${fecha}`, runId);
 
-      // --- Solo ejecutar si está pendiente o con error ---
       if (["Pendiente", "Error"].includes(estado)) {
         const clave = `${sistema}|${descripcion}`;
         if (procesosEjecutadosGlobal.has(clave)) {
@@ -216,10 +216,10 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   }
 
   // ============================================================
-  // 🧾 Resumen Final del Cierre (actualizado con todos los procesos)
+  // 🧾 Resumen Final del Cierre (actualizado con hora real de inicio)
   // ============================================================
   const duracionTotal = ((Date.now() - inicioCierre) / 60000).toFixed(2);
-  const fechaEjecucion = new Date().toLocaleString("es-VE", {
+  const fechaEjecucion = fechaInicioCierre.toLocaleString("es-VE", {
     dateStyle: "full",
     timeStyle: "medium",
   });
@@ -257,14 +257,12 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   });
   resumenFinal.push("------------------------------------------");
 
-  // --- Agrupar procesos por sistema ---
   const agrupado = {};
   for (const p of resumen.detalle) {
     if (!agrupado[p.sistema]) agrupado[p.sistema] = [];
     agrupado[p.sistema].push(p);
   }
 
-  // --- Mostrar todos los procesos ejecutados ---
   Object.keys(agrupado).forEach((sistema) => {
     resumenFinal.push(`📦 ${sistema} — ${agrupado[sistema].length} procesos ejecutados:`);
     agrupado[sistema].forEach((p) => {
