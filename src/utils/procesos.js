@@ -646,9 +646,15 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
       // ✅ Corrección de cache si no coincide
       if (estadoPrevio === "EN PROCESO" && estado !== "EN PROCESO") {
-        logConsole(`♻️ Corrigiendo cache: ${descripcion} estaba EN PROCESO en cache, pero ahora está ${estado}.`, runId);
+        logConsole(
+          `♻️ Corrigiendo cache: ${descripcion} estaba EN PROCESO en cache, pero ahora está ${estado}.`,
+          runId
+        );
         cacheEstado[baseDatos][claveEjec] = estado;
         guardarCacheEstado(cacheEstado);
+
+        // 🔥 Ajuste clave: refrescar el valor en memoria
+        estado = estado.toUpperCase();
       }
 
       if (procesosFallidosGlobal.has(claveEjec)) {
@@ -699,9 +705,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       const filaExacta = await getFilaExacta(page, sistema, descripcion);
       if (!filaExacta) continue;
 
-      const botonProcesar = filaExacta
-        .locator('a:has-text("Procesar"), button:has-text("Procesar")')
-        .first();
+      const botonProcesar = filaExacta.locator('a:has-text("Procesar"), button:has-text("Procesar")').first();
 
       if (!(await botonProcesar.count())) {
         logConsole(`⚠️ No se encontró botón "Procesar" en la fila de ${descripcion}`, runId);
@@ -759,6 +763,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   return "Completado";
 }
+
 
 
 
