@@ -603,7 +603,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   function guardarCacheEstado(cache) {
     try {
       fs.writeFileSync(estadoCachePath, JSON.stringify(cache, null, 2), "utf-8");
-    } catch {}
+    } catch { }
   }
 
   let cacheEstado = cargarCacheEstado();
