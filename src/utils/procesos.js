@@ -170,16 +170,24 @@ async function ejecutarPreScripts(descripcion, baseDatos, runId = "GLOBAL") {
 }
 
 
-// --- Espera a que la MISMA fila cambie a EN PROCESO / COMPLETADO / ERROR ---
 async function esperarHastaCompletado(page, sistema, descripcion, runId = "GLOBAL") {
   logConsole(`⏳ Esperando estado final de "${descripcion}" en ${sistema}...`, runId);
 
   let estado = "DESCONOCIDO";
-  const maxIntentos = 180;        // ~180s (3 minutos)
+  const maxIntentos = 180; // ~180s (3 minutos)
   const pausaMs = 1000;
 
   for (let i = 0; i < maxIntentos; i++) {
     estado = await leerEstadoExacto(page, sistema, descripcion);
+
+    // 🧠 Nuevo: si el estado vuelve a PENDIENTE, salir para que el flujo principal lo reprograme
+    if (estado === "PENDIENTE") {
+      logConsole(
+        `♻️ "${descripcion}" detectado como PENDIENTE (no sigue en proceso) — saliendo de espera para reprocesar.`,
+        runId
+      );
+      return "Pendiente";
+    }
 
     if (["EN PROCESO", "COMPLETADO", "ERROR"].includes(estado)) {
       logConsole(`📌 Estado final de "${descripcion}" (${sistema}): ${estado}`, runId);
@@ -189,13 +197,13 @@ async function esperarHastaCompletado(page, sistema, descripcion, runId = "GLOBA
     if (i % 5 === 0) {
       logConsole(`⏳ "${descripcion}" sigue en: ${estado || "—"} → esperando...`, runId);
     }
+
     await page.waitForTimeout(pausaMs);
   }
 
   logConsole(`⚠️ Timeout esperando estado final de "${descripcion}" (${sistema}).`, runId);
   return estado || "DESCONOCIDO";
 }
-
 
 
 
