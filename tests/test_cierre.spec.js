@@ -76,7 +76,6 @@ const resumen = { total: 0, completados: 0, errores: 0, detalle: [] };
 const inicioCierre = Date.now();
 const fechaInicioCierre = new Date();
 
-// Helper
 function parseFechaDMY(fechaTxt) {
   const [d, m, y] = fechaTxt.split("/").map(Number);
   return new Date(y, m - 1, d);
@@ -149,7 +148,7 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
     }
 
     // ============================================================
-    // ▶️ Procesamiento de filas
+    // ▶️ Procesamiento de filas (adaptado para TODOS los procesos)
     // ============================================================
     for (let i = 0; i < total; i++) {
       const fila = filas.nth(i);
@@ -159,19 +158,17 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
       const fecha = (await celdas.nth(6).innerText().catch(() => "")).trim();
       const estado = (await celdas.nth(9).innerText().catch(() => "")).trim();
 
+      if (sistema !== sistemaActivo) continue;
+
       // 🔒 Control: si hay un proceso EN PROCESO visible
       if (estado.toUpperCase() === "EN PROCESO") {
         logConsole(`⏳ ${descripcion} está EN PROCESO — esperando finalización antes de continuar...`, runId);
         await esperarCompletado(page, descripcion);
         logConsole(`✅ ${descripcion} finalizó — continuando con el siguiente proceso.`, runId);
         await navegarConRetries(page, `${ambiente.replace(/\/$/, "")}/ProcesoCierre/Procesar`);
-        encontrado = true;
-        break;
+        continue;
       }
 
-      if (sistema !== sistemaActivo) continue;
-
-      // --- Control persistente ---
       const estadoPrevio = estadoPersistente[baseDatos][descripcion];
       if (estadoPrevio === "EN PROCESO") {
         logConsole(`⏳ ${descripcion} sigue "En Proceso" (persistente) — esperando finalización...`, runId);
@@ -197,27 +194,30 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
         else if (final === "Error") resumen.errores++;
 
         logConsole(`✅ ${descripcion} → ${final} (${duracion} min)`, runId);
-        encontrado = true;
-        break;
+
+        // 🔄 Refrescar tabla tras cada ejecución
+        await navegarConRetries(page, `${ambiente.replace(/\/$/, "")}/ProcesoCierre/Procesar`);
+        await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
       }
 
       if (estado === "Error") {
-        // ❌ No reintentar: cumplir la regla 6 (si no hay job, seguir de largo)
         logConsole(`❌ ${descripcion} está en ERROR — sin job activo, se continúa sin reintentar.`, runId);
-        // (Opcional) aquí podrías invocar una verificación de job si la tienes expuesta.
         continue;
       }
-
     }
 
-    if (!encontrado) await page.waitForTimeout(3000);
+    // 🔁 Revisión continua hasta no quedar pendientes
+    const hayPendientesRestantes = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll("#myTable tbody tr td:nth-child(10)"))
+        .some(td => /Pendiente|En Proceso|Error/i.test(td.innerText));
+    });
+    if (!hayPendientesRestantes) break;
+
+    await page.waitForTimeout(2000);
   }
 
   // ============================================================
   // 🧾 RESUMEN FINAL
-  // ============================================================
-  // ============================================================
-  // 🧾 RESUMEN FINAL (FORMATO LEGIBLE + ARCHIVO LOG)
   // ============================================================
   const totalMin = ((Date.now() - inicioCierre) / 60000).toFixed(2);
 
@@ -269,7 +269,6 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   const nombreArchivo = `resumen_cierre_${baseDatos}_${new Date().toISOString().slice(0, 10)}.log`;
   fs.writeFileSync(path.join(carpetaLogs, nombreArchivo), resumenTxt, "utf-8");
   logConsole(`📝 Archivo .log generado: logs/${nombreArchivo}`, runId);
-
 
   await browser.close();
 });
