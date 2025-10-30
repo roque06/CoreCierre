@@ -604,6 +604,23 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   const path = require("path");
   const estadoCachePath = path.resolve(__dirname, "../cache/estado_persistente.json");
 
+  // 🧹 LIMPIAR CACHE AL INICIAR (solo del ambiente actual)
+  try {
+    if (fs.existsSync(estadoCachePath)) {
+      const data = JSON.parse(fs.readFileSync(estadoCachePath, "utf-8"));
+      if (data[baseDatos]) {
+        delete data[baseDatos];
+        fs.writeFileSync(estadoCachePath, JSON.stringify(data, null, 2), "utf-8");
+        logConsole(`🧹 Cache de ${baseDatos} reiniciada correctamente.`, runId);
+      } else {
+        logConsole(`ℹ️ No había cache previa para ${baseDatos}.`, runId);
+      }
+    }
+  } catch (err) {
+    logConsole(`⚠️ No se pudo limpiar cache parcial: ${err.message}`, runId);
+  }
+
+  // =============================== FUNCIONES INTERNAS ===============================
   function cargarCacheEstado() {
     try {
       if (!fs.existsSync(estadoCachePath)) return {};
@@ -648,8 +665,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
     try {
       const fila = filas[i];
       const sis =
-        (await fila.$eval("td:nth-child(3)", (el) => el.innerText.trim().toUpperCase())) ||
-        "";
+        (await fila.$eval("td:nth-child(3)", (el) => el.innerText.trim().toUpperCase())) || "";
       if (sis !== sistema.toUpperCase()) continue;
 
       const descripcion =
