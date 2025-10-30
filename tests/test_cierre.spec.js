@@ -89,7 +89,7 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
 
   const browser = await chromium.launch({
     channel: "msedge",
-    headless: true,
+    headless: false,
     args: ["--start-maximized", "--disable-infobars", "--no-default-browser-check"],
   });
 
