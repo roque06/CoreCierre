@@ -603,7 +603,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   function guardarCacheEstado(cache) {
     try {
       fs.writeFileSync(estadoCachePath, JSON.stringify(cache, null, 2), "utf-8");
-    } catch { }
+    } catch {}
   }
 
   let cacheEstado = cargarCacheEstado();
@@ -644,7 +644,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       const claveEjec = buildClaveProceso(sistema, descripcion, fechaTxt);
       const estadoPrevio = cacheEstado[baseDatos][claveEjec];
 
-      // ✅ CORRECCIÓN: si el cache dice EN PROCESO pero la tabla ya muestra otro estado, se actualiza
+      // ✅ Corrección de cache si no coincide
       if (estadoPrevio === "EN PROCESO" && estado !== "EN PROCESO") {
         logConsole(`♻️ Corrigiendo cache: ${descripcion} estaba EN PROCESO en cache, pero ahora está ${estado}.`, runId);
         cacheEstado[baseDatos][claveEjec] = estado;
@@ -656,7 +656,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         continue;
       }
 
-      // 🧠 Si sigue marcado como EN PROCESO (real), reanudar
+      // 🧠 Reanudar si quedó EN PROCESO
       if (cacheEstado[baseDatos][claveEjec] === "EN PROCESO") {
         logConsole(`⏸️ ${descripcion} estaba EN PROCESO al reiniciar — retomando espera hasta completado.`, runId);
         const resultadoReanudo = await esperarHastaCompletado(page, sistema, descripcion, claveEjec, runId);
@@ -672,7 +672,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         }
       }
 
-      // 🔒 Si realmente está EN PROCESO en la tabla
+      // 🔒 Si está EN PROCESO actualmente
       if (estado === "EN PROCESO") {
         const resultado = await esperarHastaCompletado(page, sistema, descripcion, claveEjec, runId);
         cacheEstado[baseDatos][claveEjec] = (resultado || "DESCONOCIDO").toUpperCase();
@@ -682,33 +682,45 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
       let estadoFinal;
 
-      // ❌ Si está en ERROR — no reintentar
+      // ❌ No reintentar si está en ERROR
       if (estado === "ERROR") {
         logConsole(`❌ ${descripcion} se encuentra en ERROR — política: no reintentar.`, runId);
         procesosFallidosGlobal.add(claveEjec);
         continue;
       }
 
-      // ⚙️ Si está PENDIENTE — aquí ahora sí hace clic correctamente
+      // ⚙️ Solo ejecutar si está PENDIENTE
       if (estado !== "PENDIENTE") continue;
       if (procesosEjecutadosGlobal.has(claveEjec)) continue;
 
       logConsole(`▶️ [${sistema}] ${descripcion} (${estado}) — Fecha=${fechaTxt}`, runId);
 
+      // =============================== 🖱️ CLICK EXACTO ===============================
       const filaExacta = await getFilaExacta(page, sistema, descripcion);
       if (!filaExacta) continue;
+
       const botonProcesar = filaExacta
-        .locator('a:has-text("Procesar Directo"), a[href*="Procesar"], a[onclick*="Procesar"]')
+        .locator('a:has-text("Procesar"), button:has-text("Procesar")')
         .first();
-      if (!(await botonProcesar.count())) continue;
 
-      procesosEjecutadosGlobal.set(claveEjec, true);
-      cacheEstado[baseDatos][claveEjec] = "EN PROCESO";
-      guardarCacheEstado(cacheEstado);
+      if (!(await botonProcesar.count())) {
+        logConsole(`⚠️ No se encontró botón "Procesar" en la fila de ${descripcion}`, runId);
+        continue;
+      }
 
+      await botonProcesar.scrollIntoViewIfNeeded();
+      await botonProcesar.waitFor({ state: "visible", timeout: 5000 });
       await botonProcesar.click({ force: true });
-      logConsole(`🖱️ Click en "${descripcion}" (force)`, runId);
+      logConsole(`🖱️ Click ejecutado en "${descripcion}" (force)`, runId);
 
+      // =============================== 🧩 COMPLETAR MANUAL ===============================
+      try {
+        await completarEjecucionManual(page, runId);
+      } catch (e) {
+        logConsole(`⚠️ No se detectó modal: ${e.message}`, runId);
+      }
+
+      // =============================== 🕒 MONITOREAR ESTADO ===============================
       let ciclos = 0;
       while (true) {
         await page.waitForTimeout(2000);
@@ -725,8 +737,12 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       if (estadoFinal === "COMPLETADO") {
         cacheEstado[baseDatos][claveEjec] = "COMPLETADO";
         guardarCacheEstado(cacheEstado);
+        logConsole(`✅ ${descripcion} marcado COMPLETADO.`, runId);
+      } else if (estadoFinal === "ERROR") {
+        logConsole(`❌ ${descripcion} finalizó con error.`, runId);
       }
 
+      // Refrescar tabla
       await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
       await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
       filas = await page.$$("#myTable tbody tr");
