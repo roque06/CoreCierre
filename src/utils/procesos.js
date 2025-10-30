@@ -648,6 +648,8 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   const procesosFallidosGlobal = global.procesosFallidosGlobal || new Set();
   global.procesosFallidosGlobal = procesosFallidosGlobal;
 
+  const f4Procesados = new Set();
+
   const normalizar = (t) =>
     (t || "")
       .normalize("NFD")
@@ -809,6 +811,26 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       if (procesosEjecutadosGlobal.has(claveEjec)) continue;
 
       logConsole(`▶️ [${sistema}] ${descripcion} (${estado}) — Fecha=${fechaTxt}`, runId);
+
+      // ============================================================
+      // 🧩 Caso especial F4 (FECHA MAYOR)
+      // ============================================================
+      if (sistema === "F4") {
+        const tieneFechaMayor = await esF4FechaMayor(descripcion, fechaTxt, filas, runId);
+        if (tieneFechaMayor) {
+          logConsole(`📆 [F4] FECHA MAYOR detectada → ejecutando SQL sin clics`, runId);
+          const resultadoF4 = await ejecutarF4FechaMayor(page, baseDatos, connectString, runId);
+          if (resultadoF4 === "F4_COMPLETADO_MAYOR") {
+            f4Procesados.add(descripcion.toUpperCase());
+            await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
+            logConsole(`✅ [F4] Flujo FECHA MAYOR completado sin clics`, runId);
+            filas = await page.$$("#myTable tbody tr");
+            continue;
+          }
+        } else {
+          logConsole(`⏭️ [F4] ${descripcion} no tiene fecha mayor → flujo normal.`, runId);
+        }
+      }
 
       // =============================== 📦 Ejecutar pre-scripts ===============================
       try {
