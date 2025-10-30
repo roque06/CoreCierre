@@ -647,19 +647,27 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   for (let i = 0; i < filas.length; i++) {
     try {
       const fila = filas[i];
-      const sis = (await fila.$eval("td:nth-child(3)", (el) => el.innerText.trim().toUpperCase())) || "";
+      const sis =
+        (await fila.$eval("td:nth-child(3)", (el) => el.innerText.trim().toUpperCase())) ||
+        "";
       if (sis !== sistema.toUpperCase()) continue;
 
-      const descripcion = (await fila.$eval("td:nth-child(5)", (el) => el.innerText.trim())) || "";
-      const fechaTxt = (await fila.$eval("td:nth-child(7)", (el) => el.innerText.trim())) || "";
-      let estado = ((await fila.$eval("td:nth-child(10)", (el) => el.innerText.trim())) || "").toUpperCase();
+      const descripcion =
+        (await fila.$eval("td:nth-child(5)", (el) => el.innerText.trim())) || "";
+      const fechaTxt =
+        (await fila.$eval("td:nth-child(7)", (el) => el.innerText.trim())) || "";
+      let estado =
+        ((await fila.$eval("td:nth-child(10)", (el) => el.innerText.trim())) || "").toUpperCase();
 
       const claveEjec = buildClaveProceso(sistema, descripcion, fechaTxt);
       const estadoPrevio = cacheEstado[baseDatos][claveEjec];
 
       // ✅ Corrección de cache si no coincide
       if (estadoPrevio === "EN PROCESO" && estado !== "EN PROCESO") {
-        logConsole(`♻️ Corrigiendo cache: ${descripcion} estaba EN PROCESO en cache, pero ahora está ${estado}.`, runId);
+        logConsole(
+          `♻️ Corrigiendo cache: ${descripcion} estaba EN PROCESO en cache, pero ahora está ${estado}.`,
+          runId
+        );
         cacheEstado[baseDatos][claveEjec] = estado;
         guardarCacheEstado(cacheEstado);
       }
@@ -672,8 +680,17 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       // 🧠 Reanudar si quedó EN PROCESO
       const estadoActualizado = cacheEstado[baseDatos][claveEjec];
       if (estadoActualizado === "EN PROCESO") {
-        logConsole(`⏸️ ${descripcion} estaba EN PROCESO al reiniciar — retomando espera hasta completado.`, runId);
-        const resultadoReanudo = await esperarHastaCompletado(page, sistema, descripcion, claveEjec, runId);
+        logConsole(
+          `⏸️ ${descripcion} estaba EN PROCESO al reiniciar — retomando espera hasta completado.`,
+          runId
+        );
+        const resultadoReanudo = await esperarHastaCompletado(
+          page,
+          sistema,
+          descripcion,
+          claveEjec,
+          runId
+        );
         if (resultadoReanudo === "Completado") {
           cacheEstado[baseDatos][claveEjec] = "COMPLETADO";
           guardarCacheEstado(cacheEstado);
@@ -688,7 +705,13 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
       // 🔒 Si está EN PROCESO actualmente
       if (estado === "EN PROCESO") {
-        const resultado = await esperarHastaCompletado(page, sistema, descripcion, claveEjec, runId);
+        const resultado = await esperarHastaCompletado(
+          page,
+          sistema,
+          descripcion,
+          claveEjec,
+          runId
+        );
         cacheEstado[baseDatos][claveEjec] = (resultado || "DESCONOCIDO").toUpperCase();
         guardarCacheEstado(cacheEstado);
         continue;
@@ -711,7 +734,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
             logConsole(`🟡 Job Oracle activo detectado — esperando que finalice...`, runId);
 
             // 🧩 Obtener codSistema y codProceso desde el href de la fila
-            const filaTarget = await page.locator(`#myTable tbody tr:has-text("${descripcion}")`).first();
+            const filaTarget = await page
+              .locator(`#myTable tbody tr:has-text("${descripcion}")`)
+              .first();
             const enlace = filaTarget
               .locator('a[href*="ProcesarDirecto"], a:has-text("Procesar Directo")')
               .first();
@@ -724,8 +749,11 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
             const codProceso = href.match(/CodProceso=([^&]+)/i)?.[1] || "0";
 
             const { runSqlInline } = require("./oracleUtils.js");
-            await monitorearF4Job(connectString, baseDatos, async () => {
-              const sql = `
+            await monitorearF4Job(
+              connectString,
+              baseDatos,
+              async () => {
+                const sql = `
                 UPDATE PA.PA_BITACORA_PROCESO_CIERRE
                    SET ESTATUS='T', FECHA_FIN = SYSDATE
                  WHERE COD_SISTEMA='${codSistema}'
@@ -736,14 +764,22 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
                       WHERE x.COD_SISTEMA='${codSistema}'
                         AND x.COD_PROCESO=${codProceso}
                    )`;
-              await runSqlInline(sql, connectString);
-            }, runId);
+                await runSqlInline(sql, connectString);
+              },
+              runId
+            );
 
-            logConsole(`✅ Proceso ${descripcion} (${sistema}) actualizado a 'T' tras finalizar job.`, runId);
+            logConsole(
+              `✅ Proceso ${descripcion} (${sistema}) actualizado a 'T' tras finalizar job.`,
+              runId
+            );
             cacheEstado[baseDatos][claveEjec] = "COMPLETADO";
             guardarCacheEstado(cacheEstado);
           } else {
-            logConsole(`ℹ️ No hay job Oracle activo para ${descripcion} — se deja en ERROR y continúa.`, runId);
+            logConsole(
+              `ℹ️ No hay job Oracle activo para ${descripcion} — se deja en ERROR y continúa.`,
+              runId
+            );
           }
         } catch (e) {
           logConsole(`⚠️ Error monitoreando job Oracle: ${e.message}`, runId);
@@ -757,6 +793,18 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       if (procesosEjecutadosGlobal.has(claveEjec)) continue;
 
       logConsole(`▶️ [${sistema}] ${descripcion} (${estado}) — Fecha=${fechaTxt}`, runId);
+
+      // =============================== 📦 Ejecutar pre-scripts ===============================
+      try {
+        if (typeof ejecutarPreScripts === "function") {
+          await ejecutarPreScripts(descripcion, baseDatos, runId);
+          logConsole(`✅ Pre-scripts ejecutados correctamente para ${descripcion}`, runId);
+        } else {
+          logConsole(`⚠️ ejecutarPreScripts() no está definida en este contexto`, runId);
+        }
+      } catch (err) {
+        logConsole(`⚠️ Error ejecutando pre-scripts de ${descripcion}: ${err.message}`, runId);
+      }
 
       // =============================== 🖱️ CLICK EXACTO ===============================
       const filaExacta = await getFilaExacta(page, sistema, descripcion);
