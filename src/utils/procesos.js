@@ -170,24 +170,16 @@ async function ejecutarPreScripts(descripcion, baseDatos, runId = "GLOBAL") {
 }
 
 
+// --- Espera a que la MISMA fila cambie a EN PROCESO / COMPLETADO / ERROR ---
 async function esperarHastaCompletado(page, sistema, descripcion, runId = "GLOBAL") {
   logConsole(`⏳ Esperando estado final de "${descripcion}" en ${sistema}...`, runId);
 
   let estado = "DESCONOCIDO";
-  const maxIntentos = 180; // ~180s (3 minutos)
+  const maxIntentos = 180;        // ~180s (3 minutos)
   const pausaMs = 1000;
 
   for (let i = 0; i < maxIntentos; i++) {
     estado = await leerEstadoExacto(page, sistema, descripcion);
-
-    // 🧠 Nuevo: si el estado vuelve a PENDIENTE, salir para que el flujo principal lo reprograme
-    if (estado === "PENDIENTE") {
-      logConsole(
-        `♻️ "${descripcion}" detectado como PENDIENTE (no sigue en proceso) — saliendo de espera para reprocesar.`,
-        runId
-      );
-      return "Pendiente";
-    }
 
     if (["EN PROCESO", "COMPLETADO", "ERROR"].includes(estado)) {
       logConsole(`📌 Estado final de "${descripcion}" (${sistema}): ${estado}`, runId);
@@ -197,13 +189,13 @@ async function esperarHastaCompletado(page, sistema, descripcion, runId = "GLOBA
     if (i % 5 === 0) {
       logConsole(`⏳ "${descripcion}" sigue en: ${estado || "—"} → esperando...`, runId);
     }
-
     await page.waitForTimeout(pausaMs);
   }
 
   logConsole(`⚠️ Timeout esperando estado final de "${descripcion}" (${sistema}).`, runId);
   return estado || "DESCONOCIDO";
 }
+
 
 
 
@@ -599,6 +591,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   const path = require("path");
   const estadoCachePath = path.resolve(__dirname, "../cache/estado_persistente.json");
 
+  // ============================================================
+  // 🧩 Helpers para cache persistente universal
+  // ============================================================
   function cargarCacheEstado() {
     try {
       if (!fs.existsSync(estadoCachePath)) return {};
@@ -614,6 +609,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
     } catch { }
   }
 
+  // ============================================================
+  // 🧩 Inicialización y cache cargado
+  // ============================================================
   let cacheEstado = cargarCacheEstado();
   cacheEstado[baseDatos] = cacheEstado[baseDatos] || {};
 
@@ -623,6 +621,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   const procesosEjecutadosGlobal = global.procesosEjecutadosGlobal || new Map();
   global.procesosEjecutadosGlobal = procesosEjecutadosGlobal;
 
+  // 🧩 Nuevo registro de fallos global (evita reintentos o doble clic)
   const procesosFallidosGlobal = global.procesosFallidosGlobal || new Set();
   global.procesosFallidosGlobal = procesosFallidosGlobal;
 
@@ -634,6 +633,15 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       .trim()
       .toUpperCase();
 
+  const parseFecha = (txt) => {
+    if (!txt) return null;
+    const clean = txt.replace(/[–\-\.]/g, "/").trim();
+    const [d, m, y] = clean.split("/").map(Number);
+    if (!d || !m || !y) return null;
+    const date = new Date(`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}T00:00:00`);
+    return isNaN(date.getTime()) ? null : date;
+  };
+
   const buildClaveProceso = (sistema, descripcion, fechaTxt) =>
     `${normalizar(sistema)}|${normalizar(descripcion)}|${(fechaTxt || "").trim()}`;
 
@@ -642,39 +650,32 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   for (let i = 0; i < filas.length; i++) {
     try {
       const fila = filas[i];
-      const sis = (await fila.$eval("td:nth-child(3)", (el) => el.innerText.trim().toUpperCase())) || "";
+      const sis = (await fila.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase())) || "";
       if (sis !== sistema.toUpperCase()) continue;
 
-      const descripcion = (await fila.$eval("td:nth-child(5)", (el) => el.innerText.trim())) || "";
-      const fechaTxt = (await fila.$eval("td:nth-child(7)", (el) => el.innerText.trim())) || "";
-      let estado = ((await fila.$eval("td:nth-child(10)", (el) => el.innerText.trim())) || "").toUpperCase();
+      const descripcion = (await fila.$eval("td:nth-child(5)", el => el.innerText.trim())) || "";
+      const fechaTxt = (await fila.$eval("td:nth-child(7)", el => el.innerText.trim())) || "";
+      let estado = ((await fila.$eval("td:nth-child(10)", el => el.innerText.trim())) || "").toUpperCase();
 
       const claveEjec = buildClaveProceso(sistema, descripcion, fechaTxt);
-      const estadoPrevio = cacheEstado[baseDatos][claveEjec];
 
-      // ✅ Corrección de cache si no coincide
-      if (estadoPrevio === "EN PROCESO" && estado !== "EN PROCESO") {
-        logConsole(
-          `♻️ Corrigiendo cache: ${descripcion} estaba EN PROCESO en cache, pero ahora está ${estado}.`,
-          runId
-        );
-        cacheEstado[baseDatos][claveEjec] = estado;
-        guardarCacheEstado(cacheEstado);
-
-        // 🔥 Ajuste clave: refrescar el valor en memoria
-        estado = estado.toUpperCase();
-      }
-
+      // ============================================================
+      // 🚫 Evitar reintento si ya falló anteriormente
+      // ============================================================
       if (procesosFallidosGlobal.has(claveEjec)) {
         logConsole(`🚫 ${descripcion} ya falló previamente — no se reintentará.`, runId);
         continue;
       }
 
-      // 🧠 Reanudar si quedó EN PROCESO
-      if (cacheEstado[baseDatos][claveEjec] === "EN PROCESO") {
+      // ============================================================
+      // 🧠 Reanudar si estaba "EN PROCESO" al reiniciar (por cache)
+      // ============================================================
+      const estadoPrevio = cacheEstado[baseDatos][claveEjec];
+      if (estadoPrevio === "EN PROCESO") {
         logConsole(`⏸️ ${descripcion} estaba EN PROCESO al reiniciar — retomando espera hasta completado.`, runId);
         const resultadoReanudo = await esperarHastaCompletado(page, sistema, descripcion, claveEjec, runId);
         if (resultadoReanudo === "Completado") {
+          logConsole(`✅ ${descripcion} completado tras reanudación.`, runId);
           cacheEstado[baseDatos][claveEjec] = "COMPLETADO";
           guardarCacheEstado(cacheEstado);
           continue;
@@ -682,83 +683,211 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           cacheEstado[baseDatos][claveEjec] = "ERROR";
           guardarCacheEstado(cacheEstado);
           procesosFallidosGlobal.add(claveEjec);
+          logConsole(`❌ ${descripcion} terminó en ERROR tras reanudación — no se reintenta.`, runId);
           continue;
         }
       }
 
-      // 🔒 Si está EN PROCESO actualmente
+      // ============================================================
+      // 🔒 Si en la tabla está EN PROCESO, esperar (sin nuevo clic)
+      // ============================================================
       if (estado === "EN PROCESO") {
+        logConsole(`⏳ ${descripcion} está EN PROCESO — esperando finalización...`, runId);
         const resultado = await esperarHastaCompletado(page, sistema, descripcion, claveEjec, runId);
         cacheEstado[baseDatos][claveEjec] = (resultado || "DESCONOCIDO").toUpperCase();
         guardarCacheEstado(cacheEstado);
         continue;
       }
 
-      let estadoFinal;
-
-      // ❌ No reintentar si está en ERROR
+      // ============================================================
+      // ❌ Si está en ERROR, NO reintentar clic (Regla 6)
+      // ============================================================
       if (estado === "ERROR") {
         logConsole(`❌ ${descripcion} se encuentra en ERROR — política: no reintentar.`, runId);
-        procesosFallidosGlobal.add(claveEjec);
-        continue;
+        procesosFallidosGlobal.add(claveEjec); // 🔒 bloqueo global de reintento
+        try {
+          const hayJob = typeof monitorearF4Job === "function"
+            ? await monitorearF4Job(connectString, baseDatos, runId)
+            : false;
+
+          if (hayJob) {
+            logConsole(`🟡 Job Oracle activo detectado — esperando que finalice...`, runId);
+            const { runSqlInline } = require("./oracleUtils.js");
+            await monitorearF4Job(connectString, baseDatos, async () => {
+              const sql = `
+                UPDATE PA.PA_BITACORA_PROCESO_CIERRE
+                   SET ESTATUS='T', FECHA_FIN = SYSDATE
+                 WHERE COD_SISTEMA='${sistema}'
+                   AND TRUNC(FECHA) = (
+                     SELECT TRUNC(MAX(x.FECHA))
+                       FROM PA.PA_BITACORA_PROCESO_CIERRE x
+                      WHERE x.COD_SISTEMA='${sistema}'
+                   )`;
+              await runSqlInline(sql, connectString);
+            }, runId);
+            logConsole(`✅ Proceso ${descripcion} (${sistema}) actualizado a 'T' tras finalizar job.`, runId);
+            cacheEstado[baseDatos][claveEjec] = "COMPLETADO";
+            guardarCacheEstado(cacheEstado);
+          } else {
+            logConsole(`ℹ️ No hay job Oracle activo para ${descripcion} — se deja en ERROR y continúa.`, runId);
+            cacheEstado[baseDatos][claveEjec] = "ERROR";
+            guardarCacheEstado(cacheEstado);
+          }
+        } catch (e) {
+          logConsole(`⚠️ Error monitoreando job Oracle: ${e.message}`, runId);
+        }
+        continue; // 🚫 sin clic; se sigue el flujo
       }
 
-      // ⚙️ Solo ejecutar si está PENDIENTE
+      // A partir de aquí, solo consideramos ejecutar cuando está PENDIENTE
       if (estado !== "PENDIENTE") continue;
+
+      // Evitar doble clic concurrente
       if (procesosEjecutadosGlobal.has(claveEjec)) continue;
 
       logConsole(`▶️ [${sistema}] ${descripcion} (${estado}) — Fecha=${fechaTxt}`, runId);
 
-      // =============================== 🖱️ CLICK EXACTO ===============================
-      const filaExacta = await getFilaExacta(page, sistema, descripcion);
-      if (!filaExacta) continue;
-
-      const botonProcesar = filaExacta.locator('a:has-text("Procesar"), button:has-text("Procesar")').first();
-
-      if (!(await botonProcesar.count())) {
-        logConsole(`⚠️ No se encontró botón "Procesar" en la fila de ${descripcion}`, runId);
-        continue;
+      // =============================== ⚙️ Pre-Scripts ===============================
+      if (typeof ejecutarPreScripts === "function") {
+        try {
+          await ejecutarPreScripts(descripcion, baseDatos, runId);
+          logConsole(`✅ Pre-script(s) ejecutado(s) correctamente para ${descripcion}`, runId);
+        } catch (preErr) {
+          logConsole(`⚠️ Error ejecutando pre-script(s) de ${descripcion}: ${preErr.message}`, runId);
+        }
       }
 
-      await botonProcesar.scrollIntoViewIfNeeded();
-      await botonProcesar.waitFor({ state: "visible", timeout: 5000 });
-      await botonProcesar.click({ force: true });
-      logConsole(`🖱️ Click ejecutado en "${descripcion}" (force)`, runId);
+      // =============================== 🧠 F4 Fecha Mayor ===============================
+      if (sistema.toUpperCase() === "F4" && typeof ejecutarF4FechaMayor === "function") {
+        const filasAct = await page.$$("#myTable tbody tr");
+        const tieneMayor = await esF4FechaMayor(descripcion, fechaTxt, filasAct);
+        if (tieneMayor) {
+          const resultado = await ejecutarF4FechaMayor(page, baseDatos, connectString, runId);
+          if (resultado === "F4_COMPLETADO_MAYOR") {
+            logConsole(`✅ [F4] ${descripcion} completado vía SQL.`, runId);
+            await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
+            await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
+            filas = await page.$$("#myTable tbody tr");
+            i = -1;
+            continue;
+          }
+        }
+      }
 
-      // =============================== 🧩 COMPLETAR MANUAL ===============================
+      // =============================== 🖱️ Click normal ===============================
+      const filaExacta = await getFilaExacta(page, sistema, descripcion);
+      if (!filaExacta) continue;
+      const botonProcesar = filaExacta
+        .locator('a:has-text("Procesar Directo"), a[href*="Procesar"], a[onclick*="Procesar"]')
+        .first();
+      if (!(await botonProcesar.count())) continue;
+
+      procesosEjecutadosGlobal.set(claveEjec, true);
+      cacheEstado[baseDatos][claveEjec] = "EN PROCESO";
+      guardarCacheEstado(cacheEstado);
+
+      await botonProcesar.click({ force: true });
+      logConsole(`🖱️ Click en "${descripcion}" (force)`, runId);
+
       try {
+        await Promise.race([
+          page.waitForURL(/(EjecucionManual|ProcesarDirecto)/i, { timeout: 25000 }),
+          page.waitForSelector("#myModalAdd", { timeout: 25000 })
+        ]);
+
+        const btn = page.locator("#myModalAdd");
+        if (await btn.count()) {
+          await btn.click({ force: true });
+          logConsole("✅ Click en botón azul 'Procesar Directo'.", runId);
+        }
+
         await completarEjecucionManual(page, runId);
       } catch (e) {
         logConsole(`⚠️ No se detectó modal: ${e.message}`, runId);
       }
 
-      // =============================== 🕒 MONITOREAR ESTADO ===============================
+      // =============================== 🕒 Espera hasta estado final ===============================
+      let estadoFinal = null;
       let ciclos = 0;
+
       while (true) {
         await page.waitForTimeout(2000);
         const nuevo = await leerEstadoExacto(page, sistema, descripcion);
-        if (nuevo === "COMPLETADO" || nuevo === "ERROR") {
-          estadoFinal = nuevo;
-          cacheEstado[baseDatos][claveEjec] = estadoFinal;
-          guardarCacheEstado(cacheEstado);
-          break;
+
+        if (nuevo) {
+          if (nuevo !== estado && ciclos % 5 === 0) {
+            logConsole(`📄 ${descripcion}: estado actual = ${nuevo}`, runId);
+          }
+
+          if (nuevo === "EN PROCESO") {
+            cacheEstado[baseDatos][claveEjec] = "EN PROCESO";
+            guardarCacheEstado(cacheEstado);
+          }
+
+          if (nuevo === "COMPLETADO" || nuevo === "ERROR") {
+            estadoFinal = nuevo;
+            cacheEstado[baseDatos][claveEjec] = estadoFinal;
+            guardarCacheEstado(cacheEstado);
+            logConsole(`📊 ${descripcion}: ${estado} → ${estadoFinal}`, runId);
+            break;
+          }
+        } else if (ciclos % 5 === 0) {
+          logConsole(`📄 ${descripcion}: estado actual = DESCONOCIDO`, runId);
+        }
+
+        if (ciclos % 30 === 29) {
+          logConsole(`⏳ Esperando ${descripcion} — refrescando tabla...`, runId);
+          await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
+          await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
         }
         ciclos++;
+      }
+
+      // =============================== ⚠️ Manejo de ERROR con job ===============================
+      if (estadoFinal === "ERROR") {
+        logConsole(`❌ ${descripcion} finalizó con error.`, runId);
+        procesosFallidosGlobal.add(claveEjec); // 🧩 bloquear reintento futuro
+        try {
+          const hayJob = typeof monitorearF4Job === "function"
+            ? await monitorearF4Job(connectString, baseDatos, runId)
+            : false;
+
+          if (hayJob) {
+            logConsole(`🟡 Job Oracle activo detectado — esperando que finalice...`, runId);
+            const { runSqlInline } = require("./oracleUtils.js");
+            await monitorearF4Job(connectString, baseDatos, async () => {
+              const sql = `
+                UPDATE PA.PA_BITACORA_PROCESO_CIERRE
+                   SET ESTATUS='T', FECHA_FIN = SYSDATE
+                 WHERE COD_SISTEMA='${sistema}'
+                   AND TRUNC(FECHA) = (
+                     SELECT TRUNC(MAX(x.FECHA))
+                       FROM PA.PA_BITACORA_PROCESO_CIERRE x
+                      WHERE x.COD_SISTEMA='${sistema}'
+                   )`;
+              await runSqlInline(sql, connectString);
+            }, runId);
+            logConsole(`✅ Proceso ${descripcion} (${sistema}) actualizado a 'T' tras finalizar job.`, runId);
+          } else {
+            logConsole(`ℹ️ No se detectó job Oracle activo para ${descripcion} — continúa flujo normal (sin reintento).`, runId);
+          }
+        } catch (e) {
+          logConsole(`⚠️ Error monitoreando job Oracle: ${e.message}`, runId);
+        }
       }
 
       if (estadoFinal === "COMPLETADO") {
         cacheEstado[baseDatos][claveEjec] = "COMPLETADO";
         guardarCacheEstado(cacheEstado);
         logConsole(`✅ ${descripcion} marcado COMPLETADO.`, runId);
-      } else if (estadoFinal === "ERROR") {
-        logConsole(`❌ ${descripcion} finalizó con error.`, runId);
       }
 
-      // Refrescar tabla
+      // Refrescar tabla y reiniciar recorrido
       await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
       await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
       filas = await page.$$("#myTable tbody tr");
       i = -1;
+
     } catch (err) {
       logConsole(`⚠️ Error inesperado: ${err.message}`, runId);
       await page.waitForTimeout(3000);
@@ -771,7 +900,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   return "Completado";
 }
-
 
 
 
