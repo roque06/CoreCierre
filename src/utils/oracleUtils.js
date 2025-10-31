@@ -229,7 +229,8 @@ async function monitorearF4Job(connectString, baseDatos, runId = "GLOBAL", modoE
     const jobsFiltrados = jobs.filter(
       (j) =>
         !j.toUpperCase().includes("JOB_CIERRE_DIARIO_SCHEDULER") &&
-        !j.toUpperCase().includes("JOB_P_VAL_DOC_LEGAL_PER_MORAL")
+        !j.toUpperCase().includes("JOB_P_VAL_DOC_LEGAL_PER_MORAL") &&
+        !j.toUpperCase().includes("JOB_INACTIVA_CLIENTES")
     );
 
     if (jobsFiltrados.length === 0) {
