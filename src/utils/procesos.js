@@ -321,7 +321,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         const [d, m, y] = ftxt.split("/").map(Number);
         const f = new Date(`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}T00:00:00Z`);
         if (!isNaN(f.getTime())) fechasValidas.push({ f, ftxt });
-      } catch {}
+      } catch { }
     }
 
     if (!fechasValidas.length) {
@@ -332,8 +332,8 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
     fechasValidas.sort((a, b) => a.f - b.f);
     const fechaMayor = fechasValidas.at(-1).f;
     const fechaMayorDMY = fechasValidas.at(-1).ftxt;
-    const MON = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
-    const fechaOracle = `${String(fechaMayor.getUTCDate()).padStart(2,"0")}-${MON[fechaMayor.getUTCMonth()]}-${fechaMayor.getUTCFullYear()}`;
+    const MON = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+    const fechaOracle = `${String(fechaMayor.getUTCDate()).padStart(2, "0")}-${MON[fechaMayor.getUTCMonth()]}-${fechaMayor.getUTCFullYear()}`;
     logConsole(`📆 Fecha mayor detectada: ${fechaMayorDMY} (${fechaOracle})`, runId);
 
     // 2️⃣ Ejecutar scriptCursol.sql una sola vez
@@ -371,7 +371,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         const codSistema = href.match(/CodSistema=([^&]+)/i)?.[1] || "F4";
         const codProceso = href.match(/CodProceso=([^&]+)/i)?.[1] || "0";
         cola.push({ descripcion, codSistema, codProceso, fechaTxt });
-      } catch {}
+      } catch { }
     }
 
     if (!cola.length) {
@@ -381,14 +381,15 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
 
     logConsole(`▶️ Procesos F4 pendientes (${cola.length}) — fecha ${fechaMayorDMY}`, runId);
 
-    const { runSqlInline } = require("./oracleUtils.js");
-    const { monitorearF4Job } = require("./oracleUtils.js");
+    const { runSqlInline, monitorearF4Job } = require("./oracleUtils.js");
 
-    // 4️⃣ Ejecutar uno por uno (esperar uno, luego actualizar el siguiente)
+    // 4️⃣ Procesar secuencialmente cada F4
     for (let index = 0; index < cola.length; index++) {
       const { descripcion, codSistema, codProceso, fechaTxt } = cola[index];
+      const baseUrl = page.url().split("/ProcesoCierre")[0];
 
       logConsole(`▶️ [${codSistema}-${codProceso}] "${descripcion}" → colocar 'P'`, runId);
+
       const sqlSetP = `
         UPDATE PA.PA_BITACORA_PROCESO_CIERRE
            SET ESTATUS='P', FECHA_INICIO = SYSDATE
@@ -397,25 +398,43 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
            AND FECHA = TO_DATE('${fechaTxt}','dd/mm/yyyy')
       `.trim();
 
+      // Ejecutar UPDATE a 'P'
       try {
         await runSqlInline(sqlSetP, connectString);
         logConsole(`✅ "${descripcion}" actualizado a 'P' (fecha ${fechaTxt})`, runId);
-
-        // Espera 7 segundos para que el sistema marque EN PROCESO visualmente
-        const delayMs = 7000;
-        logConsole(`⏳ Esperando ${delayMs / 1000}s para que "${descripcion}" se marque EN PROCESO...`, runId);
-        await page.waitForTimeout(delayMs);
       } catch (err) {
         logConsole(`❌ Error al colocar en 'P' ${descripcion}: ${err.message}`, runId);
-        continue; // pasa al siguiente si falla
+        continue;
       }
 
-      // 🔁 Esperar hasta COMPLETADO o ERROR (sin bucles infinitos)
-      let estadoFinal = "";
-      const baseUrl = page.url().split("/ProcesoCierre")[0];
-      let intentos = 0;
+      // 🧭 Esperar confirmación visual “EN PROCESO” antes de continuar
+      let estadoDOM = "";
+      let intentosDOM = 0;
+      while (intentosDOM < 20) { // máx 1 min
+        await page.waitForTimeout(3000);
+        const filasCheck = await page.$$("#myTable tbody tr");
+        for (const fila of filasCheck) {
+          const codHtml = (await fila.$eval("td:nth-child(4)", el => el.innerText.trim())).replace(/\D/g, "");
+          if (codHtml === String(codProceso)) {
+            estadoDOM = (await fila.$eval("td:nth-child(10)", el => el.innerText.trim().toUpperCase())) || "";
+            break;
+          }
+        }
+        if (estadoDOM === "EN PROCESO") {
+          logConsole(`🟢 "${descripcion}" confirmado visualmente en EN PROCESO (${intentosDOM * 3}s).`, runId);
+          break;
+        }
+        if (intentosDOM % 5 === 0) {
+          logConsole(`⏳ "${descripcion}" aún no visible como EN PROCESO — refrescando...`, runId);
+          await navegarConRetries(page, `${baseUrl}/ProcesoCierre/Procesar`);
+        }
+        intentosDOM++;
+      }
 
-      while (intentos < 300) { // 300 * 4s = 20 minutos máx
+      // 🔁 Esperar hasta COMPLETADO o ERROR
+      let estadoFinal = "";
+      let intentos = 0;
+      while (intentos < 300) { // 20 minutos máx
         intentos++;
         await page.waitForTimeout(4000);
 
@@ -435,7 +454,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
 
         if (["COMPLETADO", "ERROR", "T"].includes(estadoLeido)) {
           estadoFinal = estadoLeido;
-          logConsole(`📌 Estado final de "${codProceso}" (${codSistema}): ${estadoFinal} — ${(intentos * 4) / 60} min`, runId);
+          logConsole(`📌 Estado final de "${descripcion}" (${codSistema}): ${estadoFinal} — ${(intentos * 4) / 60} min`, runId);
           break;
         }
 
@@ -444,7 +463,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         }
       }
 
-      // 🔧 Resultado del proceso actual
+      // 🔧 Resultado
       if (estadoFinal === "ERROR") {
         logConsole(`❌ "${descripcion}" falló — verificando job Oracle...`, runId);
         try {
@@ -477,7 +496,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         logConsole(`⚠️ "${descripcion}" no cambió de estado tras monitoreo, se continúa.`, runId);
       }
 
-      // 🧩 Al completarse o fallar el actual, pasa al siguiente en la cola
+      // ⏩ Avanzar solo cuando el actual haya terminado
       if (index + 1 < cola.length) {
         logConsole(`➡️ Continuando con siguiente proceso en P (${cola[index + 1].descripcion})`, runId);
       }
