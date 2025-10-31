@@ -257,6 +257,22 @@ async function monitorearF4Job(connectString, baseDatos, runId = "GLOBAL", modoE
   }
 }
 
+// Ejecuta un script SQL desde la carpeta /sql
+async function pedirScript(nombreArchivo, baseDatos, runId) {
+  const fs = require("fs");
+  const path = require("path");
+  const { runSqlInline } = require("./oracleUtils.js"); // o la función ya existente
+
+  try {
+    const ruta = path.join(__dirname, "../../sql", nombreArchivo);
+    const contenido = fs.readFileSync(ruta, "utf-8");
+    await runSqlInline(contenido, connectString);
+    logConsole(`✅ Script ejecutado correctamente: ${nombreArchivo}`, runId);
+  } catch (err) {
+    logConsole(`❌ Error ejecutando ${nombreArchivo}: ${err.message}`, runId);
+    throw err;
+  }
+}
 
 
 // =============================================================
@@ -269,4 +285,5 @@ module.exports = {
   esperarJobEspecifico,
   detectarNuevoJob,
   monitorearF4Job,
+  pedirScript
 };
