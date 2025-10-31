@@ -97,19 +97,13 @@ async function leerEstadoExacto(page, sistema, descripcion) {
 // =============================================================
 async function pedirScript(script, baseDatos, runId = "GLOBAL") {
   try {
-    const resp = await fetch("http://localhost:4000/api/run-script", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ baseDatos, script }),
-    });
-    if (!resp.ok)
-      logConsole(`❌ Error al pedir script ${script}: ${resp.statusText}`, runId);
-    else
-      logConsole(`✅ Script ejecutado correctamente: ${script}`, runId);
-  } catch (err) {
-    logConsole(`❌ Error conectando al backend para script ${script}: ${err.message}`, runId);
+    const { runSqlInline } = require("./oracleUtils.js");
+    await runSqlInline(sqlP, connectString);
+    logConsole(`✅ "${descripcion}" actualizado a 'P' correctamente.`, runId);
+  } catch (errSql) {
+    logConsole(`❌ Error al actualizar "${descripcion}" a 'P': ${errSql.message}`, runId);
   }
-}
+
 
 const preScripts = {
   "CARGA LINEA DIFERIDA ITC": ["estadoMtc.sql"],
