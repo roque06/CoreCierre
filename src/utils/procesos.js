@@ -293,9 +293,7 @@ function toOracleFecha(date) {
   return `${d}-${MON[date.getUTCMonth()]}-${date.getUTCFullYear()}`;
 }
 
-// ============================================================
-// 🧩 MODO ESPECIAL F4 FECHA MAYOR — versión final depurada (31-10-2025)
-// ============================================================
+
 async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLOBAL") {
   if (f4EnEjecucion) {
     logConsole("⏸️ F4FechaMayor ya en ejecución — esperando a que termine.", runId);
@@ -401,12 +399,24 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
       try {
         await runSqlInline(sqlSetP, connectString);
         logConsole(`✅ "${descripcion}" actualizado a 'P' (fecha ${fechaTxt})`, runId);
+
+        // 🕒 Delay tras update para permitir que la UI refleje el cambio a EN PROCESO
+        const delayMs = 7000; // 7 segundos (ajustable según rendimiento del sistema)
+        logConsole(`⏳ Esperando ${delayMs / 1000}s para que "${descripcion}" cambie visualmente a EN PROCESO...`, runId);
+        await page.waitForTimeout(delayMs);
       } catch (e) {
         logConsole(`❌ Error actualizando '${descripcion}' a 'P': ${e.message}`, runId);
         continue;
       }
 
-      const estadoFinal = await esperarHastaCompletado(page, codSistema, codProceso, descripcion, `${codSistema}-${codProceso}`, runId);
+      const estadoFinal = await esperarHastaCompletado(
+        page,
+        codSistema,
+        codProceso,
+        descripcion,
+        `${codSistema}-${codProceso}`,
+        runId
+      );
 
       if (estadoFinal === "Error") {
         try {
