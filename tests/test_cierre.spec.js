@@ -118,26 +118,29 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
     const total = await filas.count();
 
     // --- Determinar sistema activo ---
+    // 🔍 Determinar el siguiente sistema activo según orden fijo
     let sistemaActivo = null;
 
     for (const sis of ordenSistemas) {
-      if (!procesos.includes(sis)) continue;
+      // Solo considera los sistemas seleccionados en el frontend
+      if (!procesos.map(p => p.toUpperCase()).includes(sis)) continue;
 
       const hayPendientes = await filas.evaluateAll((trs, sis) => {
         return trs.some((tr) => {
           const tds = tr.querySelectorAll("td");
           if (tds.length < 8) return false;
-          const sistema = tds[2]?.innerText.trim();
-          const estado = tds[9]?.innerText.trim();
-          return sistema === sis && /(Pendiente|Error|En Proceso)/i.test(estado);
+          const sistema = tds[2]?.innerText.trim().toUpperCase();
+          const estado = tds[9]?.innerText.trim().toUpperCase();
+          return sistema === sis && /(PENDIENTE|ERROR|EN PROCESO)/i.test(estado);
         });
       }, sis);
 
       if (hayPendientes) {
         sistemaActivo = sis;
-        // ⚠️ No rompemos el ciclo con break — permite que el flujo continúe con los demás sistemas
+        break; // ✅ se detiene en el primero con pendientes en orden oficial
       }
     }
+
 
     if (!sistemaActivo) {
       logConsole("✅ No quedan procesos pendientes según configuración", runId);
@@ -238,7 +241,7 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   for (const p of resumen.detalle) {
     const icon =
       p.estado.toLowerCase().includes("completado") ? "✅" :
-      p.estado.toLowerCase().includes("error") ? "❌" : "⏭️";
+        p.estado.toLowerCase().includes("error") ? "❌" : "⏭️";
     logConsole(`${icon} [${p.sistema}] ${p.descripcion} → ${p.estado} | ⏱ ${p.duracion}`, runId);
   }
 
