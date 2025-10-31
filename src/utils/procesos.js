@@ -30,7 +30,6 @@ const procesosSaltados = new Set();
 
 
 
-
 // ============================================================
 // 🧩 Normalizador y lectura exacta de filas/estadosleerEstadoExacto
 // ============================================================
@@ -485,21 +484,6 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
       }
     }
 
-    // 🧾 Generar resumen final
-    try {
-      logConsole("📊 Generando resumen final del cierre...", runId);
-      if (typeof generarResumenFinal === "function") {
-        const horaFin = Date.now();
-        generarResumenFinal(runId, baseDatos, global.horaInicioGlobal || horaFin, horaFin, global.fasesCierre || {});
-      }
-      logConsole("✅ Todos los procesos completados correctamente.", runId);
-      await page.context().browser()?.close();
-      logConsole("💤 Bot finalizado correctamente. Cerrando ejecución...", runId);
-      process.exit(0);
-    } catch (err) {
-      logConsole(`⚠️ Error durante el cierre final: ${err.message}`, runId);
-    }
-
     logConsole("🚀 [F4 Fecha Mayor] Finalizado — control devuelto al flujo normal.", runId);
     logWeb("🚀 [F4 Fecha Mayor] Finalizado — control devuelto al flujo normal.", runId);
     return "F4_COMPLETADO_MAYOR";
@@ -870,6 +854,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       // 🧩 Caso especial F4 (FECHA MAYOR)
       // ============================================================
       if (sistema === "F4") {
+        // Leer todas las fechas F4 para comparar
         const fechasF4 = [];
         for (const filaF4 of filas) {
           try {
@@ -879,6 +864,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           } catch { }
         }
 
+        // 🚫 Nueva validación: si todas las fechas F4 son iguales, no activar modo SQL
         if (todasLasFechasSonIguales(fechasF4)) {
           logConsole(`📄 [F4] Todas las fechas F4 son iguales → se omite modo especial.`, runId);
         } else {
@@ -899,25 +885,38 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         }
       }
 
+      // ============================================================
+      // ⛔️ BLOQUE DE SEGURIDAD: evitar clics mientras corre modo especial F4
+      // ============================================================
       if (global.__f4ModoEspecialActivo) {
         logConsole(`⏳ Modo F4 Fecha Mayor activo — se omite clic en "${descripcion}"`, runId);
         continue;
       }
 
+      // =============================== 📦 Ejecutar pre-scripts ===============================
       try {
         if (typeof ejecutarPreScripts === "function") {
           await ejecutarPreScripts(descripcion, baseDatos, runId);
           logConsole(`✅ Pre-scripts ejecutados correctamente para ${descripcion}`, runId);
+        } else {
+          logConsole(`⚠️ ejecutarPreScripts() no está definida en este contexto`, runId);
         }
       } catch (err) {
         logConsole(`⚠️ Error ejecutando pre-scripts de ${descripcion}: ${err.message}`, runId);
       }
 
+      // =============================== 🖱️ CLICK EXACTO ===============================
       const filaExacta = await getFilaExacta(page, sistema, descripcion);
       if (!filaExacta) continue;
 
-      const botonProcesar = filaExacta.locator('a:has-text("Procesar"), button:has-text("Procesar")').first();
-      if (!(await botonProcesar.count())) continue;
+      const botonProcesar = filaExacta
+        .locator('a:has-text("Procesar"), button:has-text("Procesar")')
+        .first();
+
+      if (!(await botonProcesar.count())) {
+        logConsole(`⚠️ No se encontró botón "Procesar" en la fila de ${descripcion}`, runId);
+        continue;
+      }
 
       await botonProcesar.scrollIntoViewIfNeeded();
       await botonProcesar.waitFor({ state: "visible", timeout: 5000 });
@@ -963,21 +962,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       filas = await page.$$("#myTable tbody tr");
       continue;
     }
-  }
-
-  // 🧾 NUEVO BLOQUE: Generar resumen final y cierre automático
-  try {
-    logConsole("📊 Generando resumen final del cierre...", runId);
-    if (typeof generarResumenFinal === "function") {
-      const horaFin = Date.now();
-      generarResumenFinal(runId, baseDatos, global.horaInicioGlobal || horaFin, horaFin, global.fasesCierre || {});
-    }
-    logConsole("✅ Todos los procesos completados correctamente.", runId);
-    await page.context().browser()?.close();
-    logConsole("💤 Bot finalizado correctamente. Cerrando ejecución...", runId);
-    process.exit(0);
-  } catch (err) {
-    logConsole(`⚠️ Error durante el cierre final: ${err.message}`, runId);
   }
 
   return "Completado";
@@ -1058,7 +1042,6 @@ async function esF4FechaMayor(descripcionActual, fechaTxt, filasActuales, runId 
     return false;
   }
 }
-
 
 
 module.exports = {

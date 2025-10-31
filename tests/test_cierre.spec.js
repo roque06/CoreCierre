@@ -89,7 +89,7 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
 
   const browser = await chromium.launch({
     channel: "msedge",
-    headless: false,
+    headless: true,
     args: ["--start-maximized", "--disable-infobars", "--no-default-browser-check"],
   });
 
@@ -116,12 +116,13 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   while (true) {
     const filas = page.locator("tbody tr");
     const total = await filas.count();
-    let encontrado = false;
 
     // --- Determinar sistema activo ---
     let sistemaActivo = null;
+
     for (const sis of ordenSistemas) {
       if (!procesos.includes(sis)) continue;
+
       const hayPendientes = await filas.evaluateAll((trs, sis) => {
         return trs.some((tr) => {
           const tds = tr.querySelectorAll("td");
@@ -131,9 +132,10 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
           return sistema === sis && /(Pendiente|Error|En Proceso)/i.test(estado);
         });
       }, sis);
+
       if (hayPendientes) {
         sistemaActivo = sis;
-        break;
+        // ⚠️ No rompemos el ciclo con break — permite que el flujo continúe con los demás sistemas
       }
     }
 
@@ -206,14 +208,18 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
       }
     }
 
-    // 🔁 Revisión continua hasta no quedar pendientes
+    // 🔁 Verificar si quedan pendientes globales antes de continuar
     const hayPendientesRestantes = await page.evaluate(() => {
       return Array.from(document.querySelectorAll("#myTable tbody tr td:nth-child(10)"))
         .some(td => /Pendiente|En Proceso|Error/i.test(td.innerText));
     });
-    if (!hayPendientesRestantes) break;
 
-    await page.waitForTimeout(2000);
+    if (!hayPendientesRestantes) {
+      logConsole("✅ Todos los sistemas completados según configuración", runId);
+      break;
+    }
+
+    await page.waitForTimeout(3000);
   }
 
   // ============================================================
@@ -232,7 +238,7 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   for (const p of resumen.detalle) {
     const icon =
       p.estado.toLowerCase().includes("completado") ? "✅" :
-        p.estado.toLowerCase().includes("error") ? "❌" : "⏭️";
+      p.estado.toLowerCase().includes("error") ? "❌" : "⏭️";
     logConsole(`${icon} [${p.sistema}] ${p.descripcion} → ${p.estado} | ⏱ ${p.duracion}`, runId);
   }
 
@@ -272,4 +278,3 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
 
   await browser.close();
 });
-     
