@@ -285,7 +285,7 @@ function buildClaveProceso(sistema, descripcion, fechaTxt) {
 // 🧩 Flujo especial F4 Fecha Mayor
 // =============================================================
 const procesosActualizados = new Set();
-let f4FechaMayorEnEjecucion = false;
+let f4EnEjecucion = false;
 
 function toOracleFecha(date) {
   const MON = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
@@ -625,7 +625,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   function guardarCacheEstado(cache) {
     try {
       fs.writeFileSync(estadoCachePath, JSON.stringify(cache, null, 2), "utf-8");
-    } catch {}
+    } catch { }
   }
 
   // 🧩 NUEVO: función auxiliar para detectar si todas las fechas son iguales
