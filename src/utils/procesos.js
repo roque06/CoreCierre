@@ -103,7 +103,7 @@ async function pedirScript(script, baseDatos, runId = "GLOBAL") {
   } catch (errSql) {
     logConsole(`❌ Error al actualizar "${descripcion}" a 'P': ${errSql.message}`, runId);
   }
-
+}
 
 const preScripts = {
   "CARGA LINEA DIFERIDA ITC": ["estadoMtc.sql"],
