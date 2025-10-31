@@ -423,36 +423,47 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
       while (true) {
         try {
           const resultado = await runSqlInline(sqlEstado, connectString);
-          if (resultado && typeof resultado === "string") {
+
+          // 🧩 Normalizar resultado (puede venir como string, objeto o array)
+          if (typeof resultado === "string") {
             estadoOracle = resultado.trim();
-          } else if (Array.isArray(resultado) && resultado.length) {
-            estadoOracle = Object.values(resultado[0])[0] || "P";
+          } else if (Array.isArray(resultado) && resultado.length > 0) {
+            const firstRow = resultado[0];
+            estadoOracle = (firstRow.ESTATUS || Object.values(firstRow)[0] || "").trim();
+          } else if (resultado && typeof resultado === "object") {
+            estadoOracle = (resultado.ESTATUS || Object.values(resultado)[0] || "").trim();
+          } else {
+            estadoOracle = "P";
           }
 
+          // 🧠 Evaluar estado leído
           if (estadoOracle === "I" || estadoOracle === "P") {
             if (ciclos % 60 === 0) {
               const horas = (ciclos * 5) / 3600;
-              logConsole(`⏳ "${descripcion}" sigue EN PROCESO (${estadoOracle}) — esperando... (${horas.toFixed(2)}h transcurridas)`, runId);
+              logConsole(
+                `⏳ "${descripcion}" sigue EN PROCESO (${estadoOracle}) — esperando... (${horas.toFixed(2)}h transcurridas)`,
+                runId
+              );
             }
           } else if (estadoOracle === "T") {
             logConsole(`✅ "${descripcion}" finalizó correctamente (T).`, runId);
-            break;
+            break; // 💥 DETENER aquí cuando termina
           } else if (estadoOracle === "E") {
             logConsole(`❌ "${descripcion}" en ERROR (E) — iniciando monitoreo de job.`, runId);
             try {
               const okJob = await monitorearF4Job(connectString, baseDatos, async () => {
                 const sqlSetT = `
-                  UPDATE PA.PA_BITACORA_PROCESO_CIERRE
-                     SET ESTATUS='T', FECHA_FIN = SYSDATE
-                   WHERE COD_SISTEMA='${codSistema}'
-                     AND COD_PROCESO=${codProceso}
-                     AND TRUNC(FECHA) = (
-                       SELECT TRUNC(MAX(x.FECHA))
-                         FROM PA.PA_BITACORA_PROCESO_CIERRE x
-                        WHERE x.COD_SISTEMA='${codSistema}'
-                          AND x.COD_PROCESO=${codProceso}
-                     )
-                `.trim();
+            UPDATE PA.PA_BITACORA_PROCESO_CIERRE
+               SET ESTATUS='T', FECHA_FIN = SYSDATE
+             WHERE COD_SISTEMA='${codSistema}'
+               AND COD_PROCESO=${codProceso}
+               AND TRUNC(FECHA) = (
+                 SELECT TRUNC(MAX(x.FECHA))
+                   FROM PA.PA_BITACORA_PROCESO_CIERRE x
+                  WHERE x.COD_SISTEMA='${codSistema}'
+                    AND x.COD_PROCESO=${codProceso}
+               )
+          `.trim();
                 await runSqlInline(sqlSetT, connectString);
                 logConsole(`🩺 Bitácora actualizada a 'T' tras finalizar job (${codSistema}-${codProceso})`, runId);
               }, runId);
@@ -463,15 +474,16 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
             } catch (err) {
               logConsole(`⚠️ Error monitoreando job de "${descripcion}": ${err.message}`, runId);
             }
-            break;
+            break; // 💥 también salir del bucle tras error
           }
         } catch (err) {
           logConsole(`⚠️ Error leyendo estado Oracle de "${descripcion}": ${err.message}`, runId);
         }
 
         ciclos++;
-        await page.waitForTimeout(5000); // cada 5 segundos
+        await page.waitForTimeout(5000);
       }
+
 
       // 4.3. Continuar solo tras finalizar el actual
       if (i + 1 < cola.length) {
