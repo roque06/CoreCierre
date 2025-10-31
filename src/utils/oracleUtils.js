@@ -275,6 +275,24 @@ async function pedirScript(nombreArchivo, baseDatos, runId) {
 }
 
 
+
+// 🧠 Ejecuta SELECTs y devuelve filas reales
+async function runQuery(selectSql, connectString) {
+  let connection;
+  try {
+    connection = await oracledb.getConnection(connectString);
+    const result = await connection.execute(selectSql, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
+    return result.rows || [];
+  } catch (err) {
+    return [{ ERROR: err.message }];
+  } finally {
+    if (connection) await connection.close();
+  }
+}
+
+module.exports = { runQuery, /* otros exports existentes */ };
+
+
 // =============================================================
 // ✅ Exportar todas las funciones
 // =============================================================
