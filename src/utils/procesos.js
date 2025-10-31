@@ -177,11 +177,12 @@ async function esperarHastaCompletado(page, sistema, descripcion, runId = "GLOBA
   let estado = "DESCONOCIDO";
   const maxIntentos = 180; // ~180s (3 minutos)
   const pausaMs = 1000;
+  const inicio = Date.now();
 
   for (let i = 0; i < maxIntentos; i++) {
     estado = await leerEstadoExacto(page, sistema, descripcion);
 
-    // 🧠 Nuevo: si el estado real es PENDIENTE, salir para que el flujo lo reprocese
+    // 🧠 Si vuelve a PENDIENTE, salir para reprocesar
     if (estado === "PENDIENTE") {
       logConsole(
         `♻️ "${descripcion}" detectado como PENDIENTE (no sigue en proceso) — saliendo de espera para reprocesar.`,
@@ -190,23 +191,27 @@ async function esperarHastaCompletado(page, sistema, descripcion, runId = "GLOBA
       return "Pendiente";
     }
 
-    // Si ya tiene un estado final conocido
+    // ✅ Si llega a un estado final
     if (["EN PROCESO", "COMPLETADO", "ERROR"].includes(estado)) {
-      logConsole(`📌 Estado final de "${descripcion}" (${sistema}): ${estado}`, runId);
+      const minutos = ((Date.now() - inicio) / 60000).toFixed(2);
+      logConsole(`📌 Estado final de "${descripcion}" (${sistema}): ${estado} — ${minutos} minutos`, runId);
       return estado;
     }
 
-    // Log cada 5 ciclos (1 log cada 5 segundos)
+    // 🕓 Cada 5 ciclos (5s) muestra tiempo transcurrido
     if (i % 5 === 0) {
-      logConsole(`⏳ "${descripcion}" sigue en: ${estado || "—"} → esperando...`, runId);
+      const minutos = ((Date.now() - inicio) / 60000).toFixed(2);
+      logConsole(`⏳ "${descripcion}": estado actual = ${estado || "—"} — ${minutos} minutos transcurridos`, runId);
     }
 
     await page.waitForTimeout(pausaMs);
   }
 
-  logConsole(`⚠️ Timeout esperando estado final de "${descripcion}" (${sistema}).`, runId);
+  const minutosTotales = ((Date.now() - inicio) / 60000).toFixed(2);
+  logConsole(`⚠️ Timeout esperando estado final de "${descripcion}" (${sistema}) tras ${minutosTotales} minutos.`, runId);
   return estado || "DESCONOCIDO";
 }
+
 
 
 
