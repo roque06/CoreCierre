@@ -646,6 +646,12 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
     } catch { }
   }
 
+  // 🧩 NUEVO: función auxiliar para detectar si todas las fechas son iguales
+  function todasLasFechasSonIguales(fechas) {
+    if (!fechas || fechas.length === 0) return false;
+    return fechas.every(f => f === fechas[0]);
+  }
+
   let cacheEstado = cargarCacheEstado();
   cacheEstado[baseDatos] = cacheEstado[baseDatos] || {};
 
@@ -761,7 +767,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           if (hayJob) {
             logConsole(`🟡 Job Oracle activo detectado — esperando que finalice...`, runId);
 
-            // 🧩 Obtener codSistema y codProceso desde el href de la fila
             const filaTarget = await page
               .locator(`#myTable tbody tr:has-text("${descripcion}")`)
               .first();
@@ -826,19 +831,34 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       // 🧩 Caso especial F4 (FECHA MAYOR)
       // ============================================================
       if (sistema === "F4") {
-        const tieneFechaMayor = await esF4FechaMayor(descripcion, fechaTxt, filas, runId);
-        if (tieneFechaMayor) {
-          logConsole(`📆 [F4] FECHA MAYOR detectada → ejecutando SQL sin clics`, runId);
-          const resultadoF4 = await ejecutarF4FechaMayor(page, baseDatos, connectString, runId);
-          if (resultadoF4 === "F4_COMPLETADO_MAYOR") {
-            f4Procesados.add(descripcion.toUpperCase());
-            await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
-            logConsole(`✅ [F4] Flujo FECHA MAYOR completado sin clics`, runId);
-            filas = await page.$$("#myTable tbody tr");
-            continue;
-          }
+        // Leer todas las fechas F4 para comparar
+        const fechasF4 = [];
+        for (const filaF4 of filas) {
+          try {
+            const sistemaF = await filaF4.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase());
+            const fechaF = await filaF4.$eval("td:nth-child(7)", el => el.innerText.trim());
+            if (sistemaF === "F4" && fechaF) fechasF4.push(fechaF);
+          } catch { }
+        }
+
+        // 🚫 Nueva validación: si todas las fechas F4 son iguales, no activar modo SQL
+        if (todasLasFechasSonIguales(fechasF4)) {
+          logConsole(`📄 [F4] Todas las fechas F4 son iguales → se omite modo especial.`, runId);
         } else {
-          logConsole(`⏭️ [F4] ${descripcion} no tiene fecha mayor → flujo normal.`, runId);
+          const tieneFechaMayor = await esF4FechaMayor(descripcion, fechaTxt, filas, runId);
+          if (tieneFechaMayor) {
+            logConsole(`📆 [F4] FECHA MAYOR detectada → ejecutando SQL sin clics`, runId);
+            const resultadoF4 = await ejecutarF4FechaMayor(page, baseDatos, connectString, runId);
+            if (resultadoF4 === "F4_COMPLETADO_MAYOR") {
+              f4Procesados.add(descripcion.toUpperCase());
+              await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
+              logConsole(`✅ [F4] Flujo FECHA MAYOR completado sin clics`, runId);
+              filas = await page.$$("#myTable tbody tr");
+              continue;
+            }
+          } else {
+            logConsole(`⏭️ [F4] ${descripcion} no tiene fecha mayor → flujo normal.`, runId);
+          }
         }
       }
 
@@ -872,14 +892,12 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       await botonProcesar.click({ force: true });
       logConsole(`🖱️ Click ejecutado en "${descripcion}" (force)`, runId);
 
-      // =============================== 🧩 COMPLETAR MANUAL ===============================
       try {
         await completarEjecucionManual(page, runId);
       } catch (e) {
         logConsole(`⚠️ No se detectó modal: ${e.message}`, runId);
       }
 
-      // =============================== 🕒 MONITOREAR ESTADO ===============================
       let ciclos = 0;
       while (true) {
         await page.waitForTimeout(2000);
@@ -901,7 +919,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         logConsole(`❌ ${descripcion} finalizó con error.`, runId);
       }
 
-      // Refrescar tabla
       await navegarConRetries(page, `${page.url().split("/ProcesoCierre")[0]}/ProcesoCierre/Procesar`);
       await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
       filas = await page.$$("#myTable tbody tr");
@@ -918,6 +935,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   return "Completado";
 }
+
 
 
 
