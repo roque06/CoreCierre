@@ -302,7 +302,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
 
   const fs = require("fs");
   const path = require("path");
-  const { runSqlInline, monitorearF4Job } = require("./oracleUtils.js");
+  const { runSqlInline, monitorearF4Job, runQuery } = require("./oracleUtils.js");
 
   f4EnEjecucion = true;
   global.__f4ModoEspecialActivo = true;
@@ -340,7 +340,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
     const fechaOracle = `${String(fechaMayor.getUTCDate()).padStart(2, "0")}-${MON[fechaMayor.getUTCMonth()]}-${fechaMayor.getUTCFullYear()}`;
     logConsole(`📆 Fecha mayor detectada: ${fechaMayorDMY} (${fechaOracle})`, runId);
 
-    // 2️⃣ Ejecutar scriptCursol.sql (una vez)
+    // 2️⃣ Ejecutar scriptCursol.sql (una sola vez)
     try {
       const original = path.join(__dirname, "../../sql/scriptCursol.sql");
       const temporal = path.join(__dirname, "../../sql/scriptCursol_tmp.sql");
@@ -357,7 +357,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
       logConsole(`❌ Error al ejecutar scriptCursol.sql: ${err.message}`, runId);
     }
 
-    // 3️⃣ Construir cola de procesos F4 con la FECHA MAYOR
+    // 3️⃣ Construir cola con procesos F4 de la FECHA MAYOR
     const filas2 = await page.$$("#myTable tbody tr");
     const cola = [];
 
@@ -391,7 +391,6 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
       const { descripcion, codSistema, codProceso, fechaTxt } = cola[i];
       logConsole(`▶️ [${codSistema}-${codProceso}] "${descripcion}" → colocar 'P'`, runId);
 
-      // 4.1. Colocar en 'P'
       const sqlSetP = `
         UPDATE PA.PA_BITACORA_PROCESO_CIERRE
            SET ESTATUS='P', FECHA_INICIO = SYSDATE
@@ -408,7 +407,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         continue;
       }
 
-      // 4.2. Esperar perpetuamente el estado real desde Oracle
+      // 4.2 Monitoreo perpetuo en Oracle
       const sqlEstado = `
         SELECT ESTATUS FROM PA.PA_BITACORA_PROCESO_CIERRE
          WHERE COD_SISTEMA='${codSistema}'
@@ -417,53 +416,48 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
       `;
       let estadoOracle = "P";
       let ciclos = 0;
-
       logConsole(`🧠 Monitoreando estado Oracle de "${descripcion}" (espera indefinida)...`, runId);
 
       while (true) {
         try {
-          const resultado = await runSqlInline(sqlEstado, connectString);
+          const resultado = await runQuery(sqlEstado, connectString);
 
-          // 🧩 Normalizar resultado (puede venir como string, objeto o array)
-          if (typeof resultado === "string") {
-            estadoOracle = resultado.trim();
-          } else if (Array.isArray(resultado) && resultado.length > 0) {
+          // 🧩 Normalizar lectura del campo ESTATUS
+          if (Array.isArray(resultado) && resultado.length > 0) {
             const firstRow = resultado[0];
             estadoOracle = (firstRow.ESTATUS || Object.values(firstRow)[0] || "").trim();
+          } else if (typeof resultado === "string") {
+            estadoOracle = resultado.trim();
           } else if (resultado && typeof resultado === "object") {
             estadoOracle = (resultado.ESTATUS || Object.values(resultado)[0] || "").trim();
           } else {
             estadoOracle = "P";
           }
 
-          // 🧠 Evaluar estado leído
           if (estadoOracle === "I" || estadoOracle === "P") {
             if (ciclos % 60 === 0) {
               const horas = (ciclos * 5) / 3600;
-              logConsole(
-                `⏳ "${descripcion}" sigue EN PROCESO (${estadoOracle}) — esperando... (${horas.toFixed(2)}h transcurridas)`,
-                runId
-              );
+              logConsole(`⏳ "${descripcion}" sigue EN PROCESO (${estadoOracle}) — ${horas.toFixed(2)}h transcurridas`, runId);
             }
           } else if (estadoOracle === "T") {
-            logConsole(`✅ "${descripcion}" finalizó correctamente (T).`, runId);
-            break; // 💥 DETENER aquí cuando termina
+            logConsole(`✅ "${descripcion}" confirmado desde Oracle: ESTATUS='T'`, runId);
+            break;
           } else if (estadoOracle === "E") {
             logConsole(`❌ "${descripcion}" en ERROR (E) — iniciando monitoreo de job.`, runId);
             try {
               const okJob = await monitorearF4Job(connectString, baseDatos, async () => {
                 const sqlSetT = `
-            UPDATE PA.PA_BITACORA_PROCESO_CIERRE
-               SET ESTATUS='T', FECHA_FIN = SYSDATE
-             WHERE COD_SISTEMA='${codSistema}'
-               AND COD_PROCESO=${codProceso}
-               AND TRUNC(FECHA) = (
-                 SELECT TRUNC(MAX(x.FECHA))
-                   FROM PA.PA_BITACORA_PROCESO_CIERRE x
-                  WHERE x.COD_SISTEMA='${codSistema}'
-                    AND x.COD_PROCESO=${codProceso}
-               )
-          `.trim();
+                  UPDATE PA.PA_BITACORA_PROCESO_CIERRE
+                     SET ESTATUS='T', FECHA_FIN = SYSDATE
+                   WHERE COD_SISTEMA='${codSistema}'
+                     AND COD_PROCESO=${codProceso}
+                     AND TRUNC(FECHA) = (
+                       SELECT TRUNC(MAX(x.FECHA))
+                         FROM PA.PA_BITACORA_PROCESO_CIERRE x
+                        WHERE x.COD_SISTEMA='${codSistema}'
+                          AND x.COD_PROCESO=${codProceso}
+                     )
+                `.trim();
                 await runSqlInline(sqlSetT, connectString);
                 logConsole(`🩺 Bitácora actualizada a 'T' tras finalizar job (${codSistema}-${codProceso})`, runId);
               }, runId);
@@ -474,7 +468,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
             } catch (err) {
               logConsole(`⚠️ Error monitoreando job de "${descripcion}": ${err.message}`, runId);
             }
-            break; // 💥 también salir del bucle tras error
+            break;
           }
         } catch (err) {
           logConsole(`⚠️ Error leyendo estado Oracle de "${descripcion}": ${err.message}`, runId);
@@ -484,19 +478,16 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         await page.waitForTimeout(5000);
       }
 
-
-
-      // 4.3. Continuar solo tras finalizar el actual
       if (i + 1 < cola.length) {
+        await page.waitForTimeout(10000); // pequeño respiro entre procesos
         logConsole(`➡️ Continuando con siguiente proceso (${cola[i + 1].descripcion})...`, runId);
       }
     }
 
-    // 5️⃣ Finalización
     logConsole("🚀 [F4 Fecha Mayor] Finalizado — control devuelto al flujo normal.", runId);
     logWeb("🚀 [F4 Fecha Mayor] Finalizado — control devuelto al flujo normal.", runId);
-
     return "F4_COMPLETADO_MAYOR";
+
   } catch (err) {
     logConsole(`❌ Error general en ejecutarF4FechaMayor: ${err.message}`, runId);
     return "F4_ERROR";
