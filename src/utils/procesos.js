@@ -201,7 +201,7 @@ async function esperarHastaCompletado(page, sistema, descripcion, runId = "GLOBA
     // 🕓 Cada 5 ciclos (5s) muestra tiempo transcurrido
     if (i % 5 === 0) {
       const minutos = ((Date.now() - inicio) / 60000).toFixed(2);
-      logConsole(`⏳ "${descripcion}": estado actual = ${estado || "—"} — ${minutos} minutos transcurridos`, runId);
+      logConsole(`⏳ "${descripcion}": estado actual = ${estado || "—"} — ${minutos}`, runId);
     }
 
     await page.waitForTimeout(pausaMs);
