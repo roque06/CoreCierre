@@ -307,5 +307,6 @@ module.exports = {
   esperarJobEspecifico,
   detectarNuevoJob,
   monitorearF4Job,
-  pedirScript
+  pedirScript,
+  runQuery,
 };
