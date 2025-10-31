@@ -401,6 +401,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
     logConsole(`▶️ Procesos F4 pendientes (${cola.length}) — fecha ${fechaMayorDMY}`, runId);
 
     // 4️⃣ Procesar secuencialmente cada F4
+    // 4️⃣ Procesar secuencialmente cada F4 (uno a la vez, con verificación estricta)
     for (let i = 0; i < cola.length; i++) {
       const { descripcion, codSistema, codProceso, fechaTxt } = cola[i];
       const baseUrl = page.url().split("/ProcesoCierre")[0];
@@ -408,13 +409,14 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
       logConsole(`▶️ [${codSistema}-${codProceso}] "${descripcion}" → colocar 'P'`, runId);
 
       const sqlSetP = `
-        UPDATE PA.PA_BITACORA_PROCESO_CIERRE
-           SET ESTATUS='P', FECHA_INICIO = SYSDATE
-         WHERE COD_SISTEMA='${codSistema}'
-           AND COD_PROCESO=${codProceso}
-           AND FECHA = TO_DATE('${fechaTxt}','dd/mm/yyyy')
-      `.trim();
+    UPDATE PA.PA_BITACORA_PROCESO_CIERRE
+       SET ESTATUS='P', FECHA_INICIO = SYSDATE
+     WHERE COD_SISTEMA='${codSistema}'
+       AND COD_PROCESO=${codProceso}
+       AND FECHA = TO_DATE('${fechaTxt}','dd/mm/yyyy')
+  `.trim();
 
+      // 🔹 Ejecutar UPDATE a 'P'
       try {
         await runSqlInline(sqlSetP, connectString);
         logConsole(`✅ "${descripcion}" actualizado a 'P' (fecha ${fechaTxt})`, runId);
@@ -423,41 +425,59 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         continue;
       }
 
-      // 🔁 Monitoreo dinámico continuo (sin sleeps fijos)
-      let estado = "";
-      let ciclos = 0;
-      const inicio = Date.now();
+      // 🔹 Esperar a que el proceso realmente entre en EN PROCESO
+      let estadoActual = "";
+      let intentosEnProceso = 0;
+      const maxEnProceso = 20; // ~1 min
 
-      while (true) {
+      while (intentosEnProceso < maxEnProceso) {
         await navegarConRetries(page, `${baseUrl}/ProcesoCierre/Procesar`);
-        estado = await leerEstadoPorCodigo(page, codProceso);
-        ciclos++;
+        estadoActual = await leerEstadoPorCodigo(page, codProceso);
 
-        if (estado === "EN PROCESO") {
-          logConsole(`🟠 "${descripcion}" visible EN PROCESO (ciclo ${ciclos}, ${(Date.now() - inicio) / 1000 | 0}s).`, runId);
+        if (estadoActual === "EN PROCESO") {
+          logConsole(`🟠 "${descripcion}" confirmado EN PROCESO (${intentosEnProceso * 3}s).`, runId);
+          break;
         }
-
-        if (estado === "COMPLETADO" || estado === "T") {
-          logConsole(`📌 Estado final de "${descripcion}" (${codSistema}): ${estado} — ${((Date.now() - inicio) / 60000).toFixed(2)} min`, runId);
+        if (estadoActual === "COMPLETADO" || estadoActual === "T") {
+          logConsole(`⚡ "${descripcion}" completó tan rápido que no mostró EN PROCESO — marcado COMPLETADO.`, runId);
           break;
         }
 
-        if (estado === "ERROR") {
+        intentosEnProceso++;
+        await page.waitForTimeout(3000);
+      }
+
+      // 🔹 Ahora esperar hasta COMPLETADO o ERROR
+      let estadoFinal = "";
+      const inicio = Date.now();
+      let ciclos = 0;
+
+      while (true) {
+        await navegarConRetries(page, `${baseUrl}/ProcesoCierre/Procesar`);
+        estadoFinal = await leerEstadoPorCodigo(page, codProceso);
+        ciclos++;
+
+        if (["COMPLETADO", "T"].includes(estadoFinal)) {
+          logConsole(`📌 Estado final de "${descripcion}" (${codSistema}): ${estadoFinal} — ${((Date.now() - inicio) / 60000).toFixed(2)} min`, runId);
+          break;
+        }
+
+        if (estadoFinal === "ERROR") {
           logConsole(`❌ "${descripcion}" en ERROR — verificando job Oracle...`, runId);
           try {
             const okJob = await monitorearF4Job(connectString, baseDatos, async () => {
               const sqlSetT = `
-                UPDATE PA.PA_BITACORA_PROCESO_CIERRE
-                   SET ESTATUS='T', FECHA_FIN = SYSDATE
-                 WHERE COD_SISTEMA='${codSistema}'
-                   AND COD_PROCESO=${codProceso}
-                   AND TRUNC(FECHA) = (
-                     SELECT TRUNC(MAX(x.FECHA))
-                       FROM PA.PA_BITACORA_PROCESO_CIERRE x
-                      WHERE x.COD_SISTEMA='${codSistema}'
-                        AND x.COD_PROCESO=${codProceso}
-                   )
-              `.trim();
+            UPDATE PA.PA_BITACORA_PROCESO_CIERRE
+               SET ESTATUS='T', FECHA_FIN = SYSDATE
+             WHERE COD_SISTEMA='${codSistema}'
+               AND COD_PROCESO=${codProceso}
+               AND TRUNC(FECHA) = (
+                 SELECT TRUNC(MAX(x.FECHA))
+                   FROM PA.PA_BITACORA_PROCESO_CIERRE x
+                  WHERE x.COD_SISTEMA='${codSistema}'
+                    AND x.COD_PROCESO=${codProceso}
+               )
+          `.trim();
               await runSqlInline(sqlSetT, connectString);
               logConsole(`✅ Bitácora actualizada a 'T' tras finalizar job (${codSistema}-${codProceso})`, runId);
             }, runId);
@@ -471,18 +491,21 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
           break;
         }
 
-        // 🚫 Límite de tiempo para evitar loops infinitos (~25 min)
-        if ((Date.now() - inicio) > (25 * 60 * 1000)) {
+        // 🚫 Tiempo máximo de monitoreo 30 min
+        if ((Date.now() - inicio) > 30 * 60 * 1000) {
           logConsole(`⚠️ Timeout monitoreando "${descripcion}" — se continúa.`, runId);
           break;
         }
+
+        await page.waitForTimeout(5000);
       }
 
-      // 🧭 Continuar solo cuando este proceso finaliza
+      // 🔹 Pasar al siguiente solo si el actual terminó
       if (i + 1 < cola.length) {
         logConsole(`➡️ Continuando con siguiente proceso en P (${cola[i + 1].descripcion})`, runId);
       }
     }
+
 
     // 5️⃣ Finalización
     const baseUrl = page.url().split("/ProcesoCierre")[0];
