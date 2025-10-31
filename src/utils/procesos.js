@@ -1085,48 +1085,6 @@ async function esF4FechaMayor(descripcionActual, fechaTxt, filasActuales, runId 
   }
 }
 
-function generarResumenFinal(runId, baseDatos, horaInicio, horaFin, fases) {
-  const logConsole = global.logConsole || console.log;
-  const logWeb = global.logWeb || console.log;
-
-  // 🧮 Calcular duración total
-  const duracionTotalMs = horaFin - horaInicio;
-  const duracionTotalMin = (duracionTotalMs / 60000).toFixed(2);
-
-  logConsole("==============================================", runId);
-  logConsole("📊 RESUMEN FINAL DEL CIERRE", runId);
-  logConsole("==============================================", runId);
-  logConsole(`🏦 Base de datos: ${baseDatos}`, runId);
-  logConsole(`🕒 Inicio del cierre: ${new Date(horaInicio).toLocaleTimeString()}`, runId);
-  logConsole(`🕓 Fin del cierre: ${new Date(horaFin).toLocaleTimeString()}`, runId);
-  logConsole(`🧭 Duración total: ${duracionTotalMin} minutos`, runId);
-  logConsole("----------------------------------------------", runId);
-
-  let totalGeneralMin = 0;
-
-  // 🔁 Recorrer cada fase (F2, F3, F4...)
-  for (const [fase, procesos] of Object.entries(fases)) {
-    logConsole(`📂 FASE ${fase}`, runId);
-    let totalFaseMin = 0;
-
-    for (const p of procesos) {
-      const duracionMin = ((p.fin - p.inicio) / 60000).toFixed(2);
-      totalFaseMin += parseFloat(duracionMin);
-      logConsole(`   - ${p.nombre.padEnd(35, ".")} ${duracionMin} min`, runId);
-    }
-
-    totalGeneralMin += totalFaseMin;
-    logConsole(`   Total fase ${fase.padEnd(28, ".")} ${totalFaseMin.toFixed(2)} min`, runId);
-    logConsole("", runId);
-  }
-
-  logConsole("==============================================", runId);
-  logConsole(`🧾 Tiempo total de todas las fases: ${totalGeneralMin.toFixed(2)} min`, runId);
-  logConsole("✅ CIERRE FINALIZADO CON ÉXITO", runId);
-  logConsole("==============================================", runId);
-
-  logWeb("📊 Resumen final del cierre generado correctamente.", runId);
-}
 
 
 module.exports = {
