@@ -285,7 +285,7 @@ function buildClaveProceso(sistema, descripcion, fechaTxt) {
 // 🧩 Flujo especial F4 Fecha Mayor
 // =============================================================
 const procesosActualizados = new Set();
-let f4EnEjecucion = false;
+let f4FechaMayorEnEjecucion = false;
 
 function toOracleFecha(date) {
   const MON = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
