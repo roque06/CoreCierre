@@ -279,7 +279,12 @@ async function pedirScript(nombreArchivo, baseDatos, runId) {
 async function runQuery(sql, connectString) {
   let connection;
   try {
-    connection = await oracledb.getConnection(connectString);
+    connection = await oracledb.getConnection({
+      user: process.env.DB_USER || "PA",
+      password: process.env.DB_PASSWORD || "PA",
+      connectString: connectString
+    });
+
     const result = await connection.execute(sql, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
     return result.rows || [];
   } catch (err) {
