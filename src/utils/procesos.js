@@ -485,6 +485,21 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
       }
     }
 
+    // 🧾 Generar resumen final
+    try {
+      logConsole("📊 Generando resumen final del cierre...", runId);
+      if (typeof generarResumenFinal === "function") {
+        const horaFin = Date.now();
+        generarResumenFinal(runId, baseDatos, global.horaInicioGlobal || horaFin, horaFin, global.fasesCierre || {});
+      }
+      logConsole("✅ Todos los procesos completados correctamente.", runId);
+      await page.context().browser()?.close();
+      logConsole("💤 Bot finalizado correctamente. Cerrando ejecución...", runId);
+      process.exit(0);
+    } catch (err) {
+      logConsole(`⚠️ Error durante el cierre final: ${err.message}`, runId);
+    }
+
     logConsole("🚀 [F4 Fecha Mayor] Finalizado — control devuelto al flujo normal.", runId);
     logWeb("🚀 [F4 Fecha Mayor] Finalizado — control devuelto al flujo normal.", runId);
     return "F4_COMPLETADO_MAYOR";
