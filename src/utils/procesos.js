@@ -288,6 +288,9 @@ const procesosActualizados = new Set();
 let f4EnEjecucion = false;
 
 
+// ============================================================
+// 🧠 Ejecución especial F4 (Fecha Mayor) — Controlada por SQL
+// ============================================================
 async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLOBAL") {
   if (f4EnEjecucion) {
     logConsole("⏸️ F4FechaMayor ya en ejecución — esperando a que termine.", runId);
@@ -300,6 +303,9 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
   try {
     logConsole("🔄 [Modo F4 Fecha Mayor] ejecución controlada por SQL sin clics.", runId);
 
+    // ============================================================
+    // 1️⃣ Detectar fechas válidas en la tabla
+    // ============================================================
     const filas = await page.$$("#myTable tbody tr");
     const fechasF4 = [];
 
@@ -326,38 +332,35 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
     }
 
     const fechaMayor = fechasValidas.at(-1);
-    const fechaMin = fechasValidas.at(0);
-    if (fechaMayor.getTime() === fechaMin.getTime()) {
-      logConsole(`ℹ️ Todas las fechas F4 son iguales (${fechaMayor.toLocaleDateString("es-ES")}) → no se activa modo especial.`, runId);
-      return "F4_TODAS_IGUALES";
-    }
-
     const mesesOracle = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
     const fechaOracle = `${String(fechaMayor.getUTCDate()).padStart(2, "0")}-${mesesOracle[fechaMayor.getUTCMonth()]}-${fechaMayor.getUTCFullYear()}`;
 
-    if (!procesosActualizados.has("SCRIPT_F4")) {
-      try {
-        const original = path.join(__dirname, "../../sql/scriptCursol.sql");
-        const temporal = path.join(__dirname, "../../sql/scriptCursol_tmp.sql");
-        let contenido = fs.readFileSync(original, "utf-8");
-        contenido = contenido.replace(/fecha\s*=\s*'[^']+'/i, `fecha = '${fechaOracle}'`);
-        fs.writeFileSync(temporal, contenido, "utf-8");
+    // ============================================================
+    // 2️⃣ Ejecutar script temporal (scriptCursol.sql)
+    // ============================================================
+    const original = path.join(__dirname, "../../sql/scriptCursol.sql");
+    const temporal = path.join(__dirname, "../../sql/scriptCursol_tmp.sql");
 
-        await fetch("http://127.0.0.1:4000/api/run-script", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ baseDatos, script: "scriptCursol_tmp.sql", connectString }),
-        });
+    try {
+      let contenido = fs.readFileSync(original, "utf-8");
+      contenido = contenido.replace(/fecha\s*=\s*'[^']+'/i, `fecha = '${fechaOracle}'`);
+      fs.writeFileSync(temporal, contenido, "utf-8");
 
-        fs.unlinkSync(temporal);
-        logConsole(`✅ scriptCursol_tmp.sql ejecutado con fecha ${fechaOracle}`, runId);
-        procesosActualizados.add("SCRIPT_F4");
-      } catch (err) {
-        logConsole(`❌ Error ejecutando script temporal: ${err.message}`, runId);
-      }
+      await fetch("http://127.0.0.1:4000/api/run-script", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ baseDatos, script: "scriptCursol_tmp.sql", connectString }),
+      });
+
+      fs.unlinkSync(temporal);
+      logConsole(`✅ scriptCursol_tmp.sql ejecutado con fecha ${fechaOracle}`, runId);
+    } catch (err) {
+      logConsole(`❌ Error ejecutando script temporal: ${err.message}`, runId);
     }
 
-    // 🔹 Iterar procesos F4
+    // ============================================================
+    // 3️⃣ Procesar cada F4 secuencialmente (esperando entre ellos)
+    // ============================================================
     const filasActuales = await page.$$("#myTable tbody tr");
 
     for (const fila of filasActuales) {
@@ -369,91 +372,77 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         const estado = ((await fila.$eval("td:nth-child(10)", el => el.innerText.trim())) || "").toUpperCase();
         const fechaTxt = (await fila.$eval("td:nth-child(7)", el => el.innerText.trim())) || "";
         const fechaObj = new Date(fechaTxt.split("/").reverse().join("-"));
-        if (estado === "COMPLETADO" || fechaObj.getTime() >= fechaMayor.getTime()) continue;
+
+        // Solo los F4 con fecha igual a la mayor
+        if (estado === "COMPLETADO" || fechaObj.getTime() < fechaMayor.getTime()) continue;
 
         const link = await fila.$("a[href*='CodProceso']");
         const href = (await link?.getAttribute("href")) || "";
         const codSistema = href.match(/CodSistema=([^&]+)/i)?.[1] || "F4";
         const codProceso = href.match(/CodProceso=([^&]+)/i)?.[1] || "0";
-        const claveProc = `${codSistema}-${codProceso}`;
 
-        // 🧩 BLOQUE NUEVO: Actualizar estatus antes de Correr Calendario
+        // --- Bloque especial "Correr Calendario" ---
         if (descripcion.toUpperCase().includes("CORRER CALENDARIO")) {
-          try {
-            const sqlUpdateGlobal = `
-              UPDATE PA.PA_BITACORA_PROCESO_CIERRE
-                 SET ESTATUS='T'
-               WHERE COD_SISTEMA='F4'
-                 AND COD_PROCESO <> 17
-            `;
-            logConsole("📦 Ejecutando SQL correctivo previo al proceso 'Correr Calendario' (F4 Fecha Mayor)...", runId);
-
-            await fetch("http://127.0.0.1:4000/api/run-script", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                baseDatos,
-                script: "inline",
-                connectString,
-                sqlInline: sqlUpdateGlobal,
-              }),
-            });
-
-            logConsole("✅ Actualización de estatus F4 global ejecutada correctamente (excepto proceso 17).", runId);
-          } catch (err) {
-            logConsole(`❌ Error ejecutando SQL correctivo previo al calendario: ${err.message}`, runId);
-          }
-
-          // 🔹 Ejecución original del bloque “Correr Calendario”
-          logConsole(`🧩 [F4 Fecha Mayor] Correr Calendario detectado → forzando estado 'P'`, runId);
-
-          const updateSQL = `
+          const sqlGlobal = `
             UPDATE PA.PA_BITACORA_PROCESO_CIERRE
-               SET ESTATUS='P', FECHA_INICIO=SYSDATE
-             WHERE COD_SISTEMA='${codSistema}'
-               AND COD_PROCESO=${codProceso}
-               AND TRUNC(FECHA) = (
-                 SELECT TRUNC(MAX(x.FECHA))
-                   FROM PA.PA_BITACORA_PROCESO_CIERRE x
-                  WHERE x.COD_SISTEMA='${codSistema}'
-                    AND x.COD_PROCESO=${codProceso}
-               )`;
+               SET ESTATUS='T'
+             WHERE COD_SISTEMA='F4'
+               AND COD_PROCESO <> 17
+          `;
+          logConsole("📦 Ejecutando SQL correctivo previo al calendario (F4 Fecha Mayor)...", runId);
 
           await fetch("http://127.0.0.1:4000/api/run-script", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ baseDatos, script: "inline", connectString, sqlInline: updateSQL }),
+            body: JSON.stringify({ baseDatos, script: "inline", connectString, sqlInline: sqlGlobal }),
           });
 
-          await monitorearF4Job(connectString, baseDatos, runId, true);
-          logConsole("🏁 Correr Calendario completado (fecha mayor).", runId);
-        } else {
-          const updateSQL = `
-            UPDATE PA.PA_BITACORA_PROCESO_CIERRE
-               SET ESTATUS='P', FECHA_INICIO=SYSDATE
-             WHERE COD_SISTEMA='${codSistema}'
-               AND COD_PROCESO=${codProceso}
-               AND TRUNC(FECHA) = (
-                 SELECT TRUNC(MAX(x.FECHA))
-                   FROM PA.PA_BITACORA_PROCESO_CIERRE x
-                  WHERE x.COD_SISTEMA='${codSistema}'
-                    AND x.COD_PROCESO=${codProceso}
-               )`;
-
-          await fetch("http://127.0.0.1:4000/api/run-script", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ baseDatos, script: "inline", connectString, sqlInline: updateSQL }),
-          });
-
-          await monitorearF4Job(connectString, baseDatos, runId, true);
-          logConsole(`✅ ${descripcion} completado vía SQL.`, runId);
+          logConsole("✅ Actualización F4 global ejecutada correctamente (excepto proceso 17).", runId);
         }
+
+        // --- Marcar proceso actual en 'P' ---
+        const updateSQL = `
+          UPDATE PA.PA_BITACORA_PROCESO_CIERRE
+             SET ESTATUS='P', FECHA_INICIO=SYSDATE
+           WHERE COD_SISTEMA='${codSistema}'
+             AND COD_PROCESO=${codProceso}
+             AND TRUNC(FECHA) = (
+               SELECT TRUNC(MAX(x.FECHA))
+                 FROM PA.PA_BITACORA_PROCESO_CIERRE x
+                WHERE x.COD_SISTEMA='${codSistema}'
+                  AND x.COD_PROCESO=${codProceso}
+             )
+        `;
+        logConsole(`📦 Marcando "${descripcion}" como 'P'`, runId);
+
+        await fetch("http://127.0.0.1:4000/api/run-script", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ baseDatos, script: "inline", connectString, sqlInline: updateSQL }),
+        });
+
+        // --- Esperar finalización (monitoreo de job) ---
+        logConsole(`⏳ Esperando finalización de job para "${descripcion}"...`, runId);
+        const resultadoJob = await monitorearF4Job(connectString, baseDatos, runId, true);
+
+        if (resultadoJob === "ERROR") {
+          logConsole(`❌ ${descripcion} falló — monitoreando job correctivo...`, runId);
+          await monitorearF4Job(connectString, baseDatos, runId, true);
+        } else {
+          logConsole(`✅ ${descripcion} completado correctamente vía SQL.`, runId);
+        }
+
+        // --- Pequeña pausa antes del siguiente ---
+        await page.waitForTimeout(2000);
+
       } catch (errFila) {
-        logConsole(`⚠️ Error en proceso F4 especial: ${errFila.message}`, runId);
+        logConsole(`⚠️ Error procesando fila F4: ${errFila.message}`, runId);
       }
     }
 
+    // ============================================================
+    // 4️⃣ Finalizar flujo F4 Fecha Mayor
+    // ============================================================
     logConsole("✅ Todos los procesos F4 con fecha mayor completados.", runId);
     const baseUrl = page.url().split("/ProcesoCierre")[0];
     await navegarConRetries(page, `${baseUrl}/ProcesoCierre/Procesar`);
