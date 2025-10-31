@@ -294,9 +294,6 @@ async function runQuery(sql, connectString) {
   }
 }
 
-module.exports = { runQuery, /* otros exports existentes */ };
-
-
 // =============================================================
 // ✅ Exportar todas las funciones
 // =============================================================
