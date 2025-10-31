@@ -485,6 +485,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
       }
 
 
+
       // 4.3. Continuar solo tras finalizar el actual
       if (i + 1 < cola.length) {
         logConsole(`➡️ Continuando con siguiente proceso (${cola[i + 1].descripcion})...`, runId);
