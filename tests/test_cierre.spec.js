@@ -272,3 +272,4 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
 
   await browser.close();
 });
+     
