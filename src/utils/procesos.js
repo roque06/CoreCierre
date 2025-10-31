@@ -625,7 +625,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   function guardarCacheEstado(cache) {
     try {
       fs.writeFileSync(estadoCachePath, JSON.stringify(cache, null, 2), "utf-8");
-    } catch { }
+    } catch {}
   }
 
   // 🧩 NUEVO: función auxiliar para detectar si todas las fechas son iguales
@@ -842,6 +842,14 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
             logConsole(`⏭️ [F4] ${descripcion} no tiene fecha mayor → flujo normal.`, runId);
           }
         }
+      }
+
+      // ============================================================
+      // ⛔️ BLOQUE DE SEGURIDAD: evitar clics mientras corre modo especial F4
+      // ============================================================
+      if (global.__f4ModoEspecialActivo) {
+        logConsole(`⏳ Modo F4 Fecha Mayor activo — se omite clic en "${descripcion}"`, runId);
+        continue;
       }
 
       // =============================== 📦 Ejecutar pre-scripts ===============================
