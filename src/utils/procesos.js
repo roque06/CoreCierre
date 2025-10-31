@@ -408,7 +408,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         continue;
       }
 
-      // 4.2. Monitorear directamente desde Oracle
+      // 4.2. Esperar perpetuamente el estado real desde Oracle
       const sqlEstado = `
         SELECT ESTATUS FROM PA.PA_BITACORA_PROCESO_CIERRE
          WHERE COD_SISTEMA='${codSistema}'
@@ -417,11 +417,10 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
       `;
       let estadoOracle = "P";
       let ciclos = 0;
-      const maxCiclos = 900; // 900 * 2s = 30 min
 
-      logConsole(`🧠 Monitoreando estado Oracle de "${descripcion}"...`, runId);
+      logConsole(`🧠 Monitoreando estado Oracle de "${descripcion}" (espera indefinida)...`, runId);
 
-      while (ciclos < maxCiclos) {
+      while (true) {
         try {
           const resultado = await runSqlInline(sqlEstado, connectString);
           if (resultado && typeof resultado === "string") {
@@ -430,8 +429,11 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
             estadoOracle = Object.values(resultado[0])[0] || "P";
           }
 
-          if (estadoOracle === "I") {
-            if (ciclos % 15 === 0) logConsole(`⏳ "${descripcion}" sigue EN PROCESO (I)...`, runId);
+          if (estadoOracle === "I" || estadoOracle === "P") {
+            if (ciclos % 60 === 0) {
+              const horas = (ciclos * 5) / 3600;
+              logConsole(`⏳ "${descripcion}" sigue EN PROCESO (${estadoOracle}) — esperando... (${horas.toFixed(2)}h transcurridas)`, runId);
+            }
           } else if (estadoOracle === "T") {
             logConsole(`✅ "${descripcion}" finalizó correctamente (T).`, runId);
             break;
@@ -467,15 +469,11 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
           logConsole(`⚠️ Error leyendo estado Oracle de "${descripcion}": ${err.message}`, runId);
         }
 
-        await page.waitForTimeout(2000);
         ciclos++;
+        await page.waitForTimeout(5000); // cada 5 segundos
       }
 
-      if (estadoOracle !== "T" && estadoOracle !== "E") {
-        logConsole(`⚠️ Timeout monitoreando "${descripcion}" — no cambió de estado tras 30 min.`, runId);
-      }
-
-      // 4.3. Continuar al siguiente
+      // 4.3. Continuar solo tras finalizar el actual
       if (i + 1 < cola.length) {
         logConsole(`➡️ Continuando con siguiente proceso (${cola[i + 1].descripcion})...`, runId);
       }
