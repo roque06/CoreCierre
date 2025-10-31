@@ -398,7 +398,6 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
            AND FECHA = TO_DATE('${fechaTxt}','dd/mm/yyyy')
       `.trim();
 
-      // Ejecutar UPDATE a 'P'
       try {
         await runSqlInline(sqlSetP, connectString);
         logConsole(`✅ "${descripcion}" actualizado a 'P' (fecha ${fechaTxt})`, runId);
@@ -407,11 +406,12 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         continue;
       }
 
-      // 🧭 Esperar confirmación visual “EN PROCESO” antes de continuar
+      // 🧭 Esperar confirmación visual “EN PROCESO” (híbrido)
       let estadoDOM = "";
       let intentosDOM = 0;
-      while (intentosDOM < 20) { // máx 1 min
-        await page.waitForTimeout(3000);
+      const inicioTiempo = Date.now();
+      while (intentosDOM < 30) { // 30 intentos: primeros 10 rápidos
+        await page.waitForTimeout(intentosDOM < 10 ? 1000 : 3000);
         const filasCheck = await page.$$("#myTable tbody tr");
         for (const fila of filasCheck) {
           const codHtml = (await fila.$eval("td:nth-child(4)", el => el.innerText.trim())).replace(/\D/g, "");
@@ -420,14 +420,23 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
             break;
           }
         }
+
         if (estadoDOM === "EN PROCESO") {
-          logConsole(`🟢 "${descripcion}" confirmado visualmente en EN PROCESO (${intentosDOM * 3}s).`, runId);
+          logConsole(`🟢 "${descripcion}" confirmado visualmente en EN PROCESO (${((Date.now() - inicioTiempo) / 1000).toFixed(1)}s).`, runId);
           break;
         }
+
+        // 🔍 Verificación rápida: ¿ya completó antes de verse "EN PROCESO"?
+        if (estadoDOM === "COMPLETADO" || estadoDOM === "T") {
+          logConsole(`⚡ "${descripcion}" completó tan rápido que no mostró EN PROCESO — marcado COMPLETADO.`, runId);
+          break;
+        }
+
         if (intentosDOM % 5 === 0) {
           logConsole(`⏳ "${descripcion}" aún no visible como EN PROCESO — refrescando...`, runId);
           await navegarConRetries(page, `${baseUrl}/ProcesoCierre/Procesar`);
         }
+
         intentosDOM++;
       }
 
