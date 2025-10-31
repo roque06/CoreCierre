@@ -276,17 +276,21 @@ async function pedirScript(nombreArchivo, baseDatos, runId) {
 
 
 
-// 🧠 Ejecuta SELECTs y devuelve filas reales
-async function runQuery(selectSql, connectString) {
+async function runQuery(sql, connectString) {
   let connection;
   try {
     connection = await oracledb.getConnection(connectString);
-    const result = await connection.execute(selectSql, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
+    const result = await connection.execute(sql, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
     return result.rows || [];
   } catch (err) {
+    console.error("❌ Error en runQuery:", err.message);
     return [{ ERROR: err.message }];
   } finally {
-    if (connection) await connection.close();
+    if (connection) {
+      try {
+        await connection.close();
+      } catch { }
+    }
   }
 }
 
