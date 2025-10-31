@@ -410,7 +410,7 @@ async function ejecutarF4FechaMayor(page, baseDatos, connectString, runId = "GLO
         // --- Marcar en P con commit ---
         const updateSQL = `
           UPDATE PA.PA_BITACORA_PROCESO_CIERRE
-             SET ESTATUS='P', FECHA_INICIO=SYSDATE
+             SET ESTATUS='P'
            WHERE COD_SISTEMA='${codSistema}'
              AND COD_PROCESO=${codProceso}
         `;
