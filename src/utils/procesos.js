@@ -637,16 +637,20 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   const path = require("path");
   const estadoCachePath = path.resolve(__dirname, "../cache/estado_persistente.json");
 
-  // 🧩 Inicialización del archivo de cache (sin eliminar datos)
+  // 🧹 LIMPIAR CACHE AL INICIAR (solo del ambiente actual)
   try {
-    if (!fs.existsSync(estadoCachePath)) {
-      fs.writeFileSync(estadoCachePath, JSON.stringify({}, null, 2), "utf-8");
-      logConsole(`🧩 Archivo de cache creado para ${baseDatos}`, runId);
-    } else {
-      logConsole(`🧩 Archivo de cache existente cargado correctamente.`, runId);
+    if (fs.existsSync(estadoCachePath)) {
+      const data = JSON.parse(fs.readFileSync(estadoCachePath, "utf-8"));
+      if (data[baseDatos]) {
+        delete data[baseDatos];
+        fs.writeFileSync(estadoCachePath, JSON.stringify(data, null, 2), "utf-8");
+        logConsole(`🧹 Cache de ${baseDatos} reiniciada correctamente.`, runId);
+      } else {
+        logConsole(`ℹ️ No había cache previa para ${baseDatos}.`, runId);
+      }
     }
   } catch (err) {
-    logConsole(`⚠️ No se pudo inicializar cache: ${err.message}`, runId);
+    logConsole(`⚠️ No se pudo limpiar cache parcial: ${err.message}`, runId);
   }
 
   // =============================== FUNCIONES INTERNAS ===============================
@@ -962,6 +966,9 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   return "Completado";
 }
+
+
+
 
 
 
