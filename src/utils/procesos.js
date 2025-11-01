@@ -637,20 +637,16 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   const path = require("path");
   const estadoCachePath = path.resolve(__dirname, "../cache/estado_persistente.json");
 
-  // 🧹 LIMPIAR CACHE AL INICIAR (solo del ambiente actual)
+  // 🧩 Inicialización del archivo de cache (sin eliminar datos)
   try {
-    if (fs.existsSync(estadoCachePath)) {
-      const data = JSON.parse(fs.readFileSync(estadoCachePath, "utf-8"));
-      if (data[baseDatos]) {
-        delete data[baseDatos];
-        fs.writeFileSync(estadoCachePath, JSON.stringify(data, null, 2), "utf-8");
-        logConsole(`🧹 Cache de ${baseDatos} reiniciada correctamente.`, runId);
-      } else {
-        logConsole(`ℹ️ No había cache previa para ${baseDatos}.`, runId);
-      }
+    if (!fs.existsSync(estadoCachePath)) {
+      fs.writeFileSync(estadoCachePath, JSON.stringify({}, null, 2), "utf-8");
+      logConsole(`🧩 Archivo de cache creado para ${baseDatos}`, runId);
+    } else {
+      logConsole(`🧩 Archivo de cache existente cargado correctamente.`, runId);
     }
   } catch (err) {
-    logConsole(`⚠️ No se pudo limpiar cache parcial: ${err.message}`, runId);
+    logConsole(`⚠️ No se pudo inicializar cache: ${err.message}`, runId);
   }
 
   // =============================== FUNCIONES INTERNAS ===============================
@@ -666,7 +662,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   function guardarCacheEstado(cache) {
     try {
       fs.writeFileSync(estadoCachePath, JSON.stringify(cache, null, 2), "utf-8");
-    } catch { }
+    } catch {}
   }
 
   // 🧩 NUEVO: función auxiliar para detectar si todas las fechas son iguales
@@ -861,7 +857,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
             const sistemaF = await filaF4.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase());
             const fechaF = await filaF4.$eval("td:nth-child(7)", el => el.innerText.trim());
             if (sistemaF === "F4" && fechaF) fechasF4.push(fechaF);
-          } catch { }
+          } catch {}
         }
 
         // 🚫 Nueva validación: si todas las fechas F4 son iguales, no activar modo SQL
@@ -966,9 +962,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   return "Completado";
 }
-
-
-
 
 
 
