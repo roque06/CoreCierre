@@ -131,7 +131,7 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
           if (tds.length < 8) return false;
           const sistema = tds[2]?.innerText.trim().toUpperCase();
           const estado = tds[9]?.innerText.trim().toUpperCase();
-          return sistema === sis && /(PENDIENTE|ERROR|EN PROCESO)/i.test(estado);
+          return sistema === sis && /(PENDIENTE|EN PROCESO)/.test(estado);
         });
       }, sis);
 
