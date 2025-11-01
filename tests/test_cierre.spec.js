@@ -214,7 +214,7 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
     // 🔁 Verificar si quedan pendientes globales antes de continuar
     const hayPendientesRestantes = await page.evaluate(() => {
       return Array.from(document.querySelectorAll("#myTable tbody tr td:nth-child(10)"))
-        .some(td => /Pendiente|En Proceso|Error/i.test(td.innerText));
+        .some(td => /(Pendiente|En Proceso)/i.test(td.innerText));
     });
 
     if (!hayPendientesRestantes) {
