@@ -274,13 +274,48 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
         logConsole("==========================================", runId);
         logConsole(`🚀 Iniciando fase ${proximoSistema}`, runId);
         logConsole("==========================================", runId);
-
         ultimoSistemaLogueado = proximoSistema;
         continue; // ⚡ vuelve al while con el nuevo sistema
       } else {
-        logConsole("✅ No se encontraron más sistemas pendientes.", runId);
+        // 👇 Espera controlada para revalidar aparición del siguiente sistema
+        for (let intento = 1; intento <= 5; intento++) {
+          logConsole(`⏳ Revalidando si surge nueva fase (intento ${intento}/5)...`, runId);
+          await page.waitForTimeout(5000);
+          await navegarConRetries(page, `${ambiente.replace(/\/$/, "")}/ProcesoCierre/Procesar`);
+          await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
+
+          const filasRevalidadas = page.locator("tbody tr");
+          let nuevoSistema = null;
+
+          for (const sis of ordenSistemas) {
+            if (!procesos.map(p => p.toUpperCase()).includes(sis)) continue;
+            const hayPendientes = await filasRevalidadas.evaluateAll((trs, sis) => {
+              return trs.some((tr) => {
+                const tds = tr.querySelectorAll("td");
+                if (tds.length < 8) return false;
+                const sistema = tds[2]?.innerText.trim().toUpperCase();
+                const estado = tds[9]?.innerText.trim().toUpperCase();
+                return sistema === sis && /(PENDIENTE|EN PROCESO)/.test(estado);
+              });
+            }, sis);
+
+            if (hayPendientes) {
+              nuevoSistema = sis;
+              break;
+            }
+          }
+
+          if (nuevoSistema && nuevoSistema !== sistemaActivo) {
+            logConsole(`🚀 Nueva fase detectada tras espera: ${nuevoSistema}`, runId);
+            ultimoSistemaLogueado = nuevoSistema;
+            continue; // 🔄 vuelve al while con nuevo sistema
+          }
+        }
+
+        logConsole("✅ No se encontraron más sistemas pendientes tras revalidar.", runId);
         break;
       }
+
     }
 
     // Espera breve antes del próximo ciclo
