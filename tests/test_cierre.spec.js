@@ -49,7 +49,6 @@ try {
     estadoPersistente = JSON.parse(fs.readFileSync(cachePath, "utf-8"));
   }
 
-  // 🧹 Limpieza selectiva: solo elimina procesos completados
   if (!estadoPersistente[baseDatos]) estadoPersistente[baseDatos] = {};
   for (const [desc, estado] of Object.entries(estadoPersistente[baseDatos])) {
     if (estado === "COMPLETADO") delete estadoPersistente[baseDatos][desc];
@@ -61,7 +60,6 @@ try {
   logConsole(`⚠️ No se pudo leer estado persistente, se iniciará limpio.`, runId);
 }
 
-// 🧾 Guardar cambios de estado persistente
 function actualizarEstadoPersistente(descripcion, estado) {
   if (!estadoPersistente[baseDatos]) estadoPersistente[baseDatos] = {};
   estadoPersistente[baseDatos][descripcion] = estado;
@@ -69,17 +67,11 @@ function actualizarEstadoPersistente(descripcion, estado) {
 }
 
 // ============================================================
-// 🔄 Configuración general
+// 🔄 CONFIGURACIÓN GENERAL
 // ============================================================
 const ordenSistemas = ["PRE", "F2", "MTC", "F3", "MON", "F4", "F5", "F8", "FIN"];
 const resumen = { total: 0, completados: 0, errores: 0, detalle: [] };
 const inicioCierre = Date.now();
-const fechaInicioCierre = new Date();
-
-function parseFechaDMY(fechaTxt) {
-  const [d, m, y] = fechaTxt.split("/").map(Number);
-  return new Date(y, m - 1, d);
-}
 
 // ============================================================
 // ▶️ TEST PRINCIPAL DE CIERRE
@@ -111,18 +103,15 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   logConsole(`📄 Sistemas activos definidos: ${global.__sistemasActivos.join(", ")}`, runId);
 
   // ============================================================
-  // 🔁 Bucle principal
+  // 🔁 BUCLE PRINCIPAL
   // ============================================================
   while (true) {
     const filas = page.locator("tbody tr");
     const total = await filas.count();
 
-    // --- Determinar sistema activo ---
-    // 🔍 Determinar el siguiente sistema activo según orden fijo
+    // --- Buscar siguiente sistema activo ---
     let sistemaActivo = null;
-
     for (const sis of ordenSistemas) {
-      // Solo considera los sistemas seleccionados en el frontend
       if (!procesos.map(p => p.toUpperCase()).includes(sis)) continue;
 
       const hayPendientes = await filas.evaluateAll((trs, sis) => {
@@ -137,10 +126,9 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
 
       if (hayPendientes) {
         sistemaActivo = sis;
-        break; // ✅ se detiene en el primero con pendientes en orden oficial
+        break;
       }
     }
-
 
     if (!sistemaActivo) {
       logConsole("✅ No quedan procesos pendientes según configuración", runId);
@@ -153,7 +141,7 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
     }
 
     // ============================================================
-    // ▶️ Procesamiento de filas (adaptado para TODOS los procesos)
+    // ▶️ PROCESAR FILAS DEL SISTEMA ACTIVO
     // ============================================================
     for (let i = 0; i < total; i++) {
       const fila = filas.nth(i);
@@ -165,18 +153,18 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
 
       if (sistema !== sistemaActivo) continue;
 
-      // 🔒 Control: si hay un proceso EN PROCESO visible
       if (estado.toUpperCase() === "EN PROCESO") {
-        logConsole(`⏳ ${descripcion} está EN PROCESO — esperando finalización antes de continuar...`, runId);
+        logConsole(`⏳ ${descripcion} está EN PROCESO — esperando finalización...`, runId);
         await esperarCompletado(page, descripcion);
-        logConsole(`✅ ${descripcion} finalizó — continuando con el siguiente proceso.`, runId);
-        await navegarConRetries(page, `${ambiente.replace(/\/$/, "")}/ProcesoCierre/Procesar`);
+        await page.reload({ waitUntil: "load" });
+        await page.waitForSelector("#myTable tbody tr");
+        logConsole("🔄 Página recargada tras espera de proceso en curso.", runId);
         continue;
       }
 
       const estadoPrevio = estadoPersistente[baseDatos][descripcion];
       if (estadoPrevio === "EN PROCESO") {
-        logConsole(`⏳ ${descripcion} sigue "En Proceso" (persistente) — esperando finalización...`, runId);
+        logConsole(`⏳ ${descripcion} sigue "En Proceso" (persistente).`, runId);
         await esperarCompletado(page, descripcion);
         continue;
       }
@@ -200,34 +188,27 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
 
         logConsole(`✅ ${descripcion} → ${final} (${duracion} min)`, runId);
 
-        // 🔄 Refrescar tabla tras cada ejecución
-        await navegarConRetries(page, `${ambiente.replace(/\/$/, "")}/ProcesoCierre/Procesar`);
+        // 🔄 Recarga real del DOM tras cada proceso
+        await page.reload({ waitUntil: "load" });
         await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
-      }
-
-      if (estado === "Error") {
-        logConsole(`❌ ${descripcion} está en ERROR — sin job activo, se continúa sin reintentar.`, runId);
-        continue;
+        logConsole("🔄 Página recargada para sincronizar estados.", runId);
       }
     }
 
-    // 🔁 Verificar si quedan pendientes globales antes de continuar
-
     // ============================================================
-    // 🔁 Validar si el sistema actual finalizó completamente (con polling)
+    // 🔁 VALIDAR SI EL SISTEMA ACTUAL TERMINÓ
     // ============================================================
     let todasFilasSistemaActualCompletadas = false;
 
     for (let intento = 1; intento <= 5; intento++) {
       todasFilasSistemaActualCompletadas = await page.evaluate((sis) => {
         const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
-        const filasSistema = filas.filter(tr => {
+        const filasSis = filas.filter(tr => {
           const tds = tr.querySelectorAll("td");
           const sistema = tds[2]?.innerText.trim().toUpperCase();
           return sistema === sis;
         });
-        if (filasSistema.length === 0) return false;
-        return filasSistema.every(tr => {
+        return filasSis.every(tr => {
           const estado = tr.querySelectorAll("td")[9]?.innerText.trim().toUpperCase();
           return estado === "COMPLETADO" || estado === "OMITIDO";
         });
@@ -237,33 +218,31 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
 
       logConsole(`⏳ Verificando cierre completo de ${sistemaActivo} (intento ${intento}/5)...`, runId);
       await page.waitForTimeout(4000);
-      await navegarConRetries(page, `${ambiente.replace(/\/$/, "")}/ProcesoCierre/Procesar`);
-      await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
+      await page.reload({ waitUntil: "load" });
+      await page.waitForSelector("#myTable tbody tr");
+      logConsole("🔄 Página recargada durante polling de cierre de sistema.", runId);
     }
 
     if (todasFilasSistemaActualCompletadas) {
-      logConsole(`✅ Todas las filas de ${sistemaActivo} completadas — buscando siguiente sistema activo...`, runId);
+      logConsole(`✅ Todas las filas de ${sistemaActivo} completadas — buscando siguiente sistema...`, runId);
 
-      // Refresca la tabla y busca el próximo sistema con pendientes
-      await navegarConRetries(page, `${ambiente.replace(/\/$/, "")}/ProcesoCierre/Procesar`);
-      await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
+      await page.reload({ waitUntil: "load" });
+      await page.waitForSelector("#myTable tbody tr");
+      logConsole("🔄 Página recargada para detectar nuevo sistema.", runId);
 
-      const filasActualizadas = page.locator("tbody tr");
+      // Revalidar posible nueva fase
       let proximoSistema = null;
-
       for (const sis of ordenSistemas) {
         if (!procesos.map(p => p.toUpperCase()).includes(sis)) continue;
-
-        const hayPendientes = await filasActualizadas.evaluateAll((trs, sis) => {
-          return trs.some((tr) => {
+        const hayPendientes = await page.evaluate((sis) => {
+          const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
+          return filas.some(tr => {
             const tds = tr.querySelectorAll("td");
-            if (tds.length < 8) return false;
             const sistema = tds[2]?.innerText.trim().toUpperCase();
             const estado = tds[9]?.innerText.trim().toUpperCase();
             return sistema === sis && /(PENDIENTE|EN PROCESO)/.test(estado);
           });
         }, sis);
-
         if (hayPendientes) {
           proximoSistema = sis;
           break;
@@ -271,60 +250,50 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
       }
 
       if (proximoSistema && proximoSistema !== sistemaActivo) {
-        logConsole("==========================================", runId);
         logConsole(`🚀 Iniciando fase ${proximoSistema}`, runId);
-        logConsole("==========================================", runId);
         ultimoSistemaLogueado = proximoSistema;
-        continue; // ⚡ vuelve al while con el nuevo sistema
-      } else {
-        // 👇 Espera controlada para revalidar aparición del siguiente sistema
-        for (let intento = 1; intento <= 5; intento++) {
-          logConsole(`⏳ Revalidando si surge nueva fase (intento ${intento}/5)...`, runId);
-          await page.waitForTimeout(5000);
-          await navegarConRetries(page, `${ambiente.replace(/\/$/, "")}/ProcesoCierre/Procesar`);
-          await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
+        continue;
+      }
 
-          const filasRevalidadas = page.locator("tbody tr");
-          let nuevoSistema = null;
+      // Espera controlada y revalidación
+      for (let intento = 1; intento <= 5; intento++) {
+        logConsole(`⏳ Revalidando si surge nueva fase (intento ${intento}/5)...`, runId);
+        await page.waitForTimeout(5000);
+        await page.reload({ waitUntil: "load" });
+        await page.waitForSelector("#myTable tbody tr");
+        logConsole("🔄 Revalidando DOM tras recarga para buscar nueva fase.", runId);
 
-          for (const sis of ordenSistemas) {
-            if (!procesos.map(p => p.toUpperCase()).includes(sis)) continue;
-            const hayPendientes = await filasRevalidadas.evaluateAll((trs, sis) => {
-              return trs.some((tr) => {
-                const tds = tr.querySelectorAll("td");
-                if (tds.length < 8) return false;
-                const sistema = tds[2]?.innerText.trim().toUpperCase();
-                const estado = tds[9]?.innerText.trim().toUpperCase();
-                return sistema === sis && /(PENDIENTE|EN PROCESO)/.test(estado);
-              });
-            }, sis);
+        let nuevoSistema = null;
+        for (const sis of ordenSistemas) {
+          if (!procesos.map(p => p.toUpperCase()).includes(sis)) continue;
+          const hayPendientes = await page.evaluate((sis) => {
+            const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
+            return filas.some(tr => {
+              const tds = tr.querySelectorAll("td");
+              const sistema = tds[2]?.innerText.trim().toUpperCase();
+              const estado = tds[9]?.innerText.trim().toUpperCase();
+              return sistema === sis && /(PENDIENTE|EN PROCESO)/.test(estado);
+            });
+          }, sis);
 
-            if (hayPendientes) {
-              nuevoSistema = sis;
-              break;
-            }
-          }
-
-          if (nuevoSistema && nuevoSistema !== sistemaActivo) {
-            logConsole(`🚀 Nueva fase detectada tras espera: ${nuevoSistema}`, runId);
-            ultimoSistemaLogueado = nuevoSistema;
-            continue; // 🔄 vuelve al while con nuevo sistema
+          if (hayPendientes) {
+            nuevoSistema = sis;
+            break;
           }
         }
 
-        logConsole("✅ No se encontraron más sistemas pendientes tras revalidar.", runId);
-        break;
+        if (nuevoSistema && nuevoSistema !== sistemaActivo) {
+          logConsole(`🚀 Nueva fase detectada tras espera: ${nuevoSistema}`, runId);
+          ultimoSistemaLogueado = nuevoSistema;
+          continue;
+        }
       }
 
+      logConsole("✅ No se encontraron más sistemas pendientes tras revalidar.", runId);
+      break;
     }
 
-    // Espera breve antes del próximo ciclo
     await page.waitForTimeout(2000);
-
-
-
-    await page.waitForTimeout(3000);
-
   }
 
   // ============================================================
@@ -335,51 +304,32 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   logConsole("==========================================", runId);
   logConsole("📊 RESUMEN FINAL DEL CIERRE", runId);
   logConsole("==========================================", runId);
-  logConsole(`🗓 Fecha de ejecución real: ${new Date().toLocaleString("es-VE")}`, runId);
+  logConsole(`🗓 Fecha: ${new Date().toLocaleString("es-VE")}`, runId);
   logConsole(`🧩 Instancia ejecutada: ${baseDatos}`, runId);
   logConsole(`🌐 Ambiente: ${ambiente}`, runId);
   logConsole("------------------------------------------", runId);
 
   for (const p of resumen.detalle) {
-    const icon =
-      p.estado.toLowerCase().includes("completado") ? "✅" :
-        p.estado.toLowerCase().includes("error") ? "❌" : "⏭️";
-    logConsole(`${icon} [${p.sistema}] ${p.descripcion} → ${p.estado} | ⏱ ${p.duracion}`, runId);
+    const icon = p.estado.toLowerCase().includes("completado") ? "✅" :
+      p.estado.toLowerCase().includes("error") ? "❌" : "⏭️";
+    logConsole(`${icon} [${p.sistema}] ${p.descripcion} → ${p.estado} | ${p.duracion}`, runId);
   }
 
   logConsole("------------------------------------------", runId);
   logConsole(`📊 Total procesos ejecutados: ${resumen.total}`, runId);
   logConsole(`✅ Completados: ${resumen.completados}`, runId);
   logConsole(`❌ Errores: ${resumen.errores}`, runId);
-  logConsole("------------------------------------------", runId);
   logConsole(`🕒 Tiempo total transcurrido: ${totalMin} min`, runId);
   logConsole("==========================================", runId);
   logConsole(`✅ Cierre completado según configuración (${totalMin} min)`, runId);
 
-  // 📝 Guardar también en archivo de texto plano
-  const resumenTxt = [
-    "==========================================",
-    "📊 RESUMEN FINAL DEL CIERRE",
-    "==========================================",
-    `🗓 Fecha: ${new Date().toLocaleString("es-VE")}`,
-    `🧩 Base de Datos: ${baseDatos}`,
-    `🌐 Ambiente: ${ambiente}`,
-    "------------------------------------------",
-    ...resumen.detalle.map(
-      p => `${p.estado === "Completado" ? "✅" : "❌"} [${p.sistema}] ${p.descripcion} → ${p.estado} | ${p.duracion}`
-    ),
-    "------------------------------------------",
-    `Completados: ${resumen.completados} / ${resumen.total}`,
-    `Errores: ${resumen.errores}`,
-    `🕒 Total: ${totalMin} min`,
-    "=========================================="
-  ].join("\n");
-
+  // 📝 Guardar resumen
   const carpetaLogs = path.join(__dirname, "../logs");
   if (!fs.existsSync(carpetaLogs)) fs.mkdirSync(carpetaLogs);
   const nombreArchivo = `resumen_cierre_${baseDatos}_${new Date().toISOString().slice(0, 10)}.log`;
-  fs.writeFileSync(path.join(carpetaLogs, nombreArchivo), resumenTxt, "utf-8");
+  fs.writeFileSync(path.join(carpetaLogs, nombreArchivo), JSON.stringify(resumen, null, 2), "utf-8");
   logConsole(`📝 Archivo .log generado: logs/${nombreArchivo}`, runId);
 
   await browser.close();
 });
+// ============================================================
