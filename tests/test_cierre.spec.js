@@ -213,40 +213,65 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
 
     // 🔁 Verificar si quedan pendientes globales antes de continuar
     // 🔁 Verificar si quedan pendientes globales antes de continuar
-    let hayPendientesRestantes = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll("#myTable tbody tr td:nth-child(10)"))
-        .some(td => /(Pendiente|En Proceso)/i.test(td.innerText));
-    });
+    // ============================================================
+    // 🔁 Validar si el sistema actual finalizó completamente
+    // ============================================================
+    const todasFilasSistemaActualCompletadas = await page.evaluate((sis) => {
+      const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
+      const filasSistema = filas.filter(tr => {
+        const tds = tr.querySelectorAll("td");
+        const sistema = tds[2]?.innerText.trim().toUpperCase();
+        return sistema === sis;
+      });
+      if (filasSistema.length === 0) return false;
+      return filasSistema.every(tr => {
+        const estado = tr.querySelectorAll("td")[9]?.innerText.trim().toUpperCase();
+        return estado === "COMPLETADO" || estado === "OMITIDO";
+      });
+    }, sistemaActivo);
 
-    // 🧩 Nueva validación con reintentos dinámicos
-    if (!hayPendientesRestantes) {
-      logConsole("🔁 Revalidando tabla para detectar siguientes sistemas (espera controlada)...", runId);
+    if (todasFilasSistemaActualCompletadas) {
+      logConsole(`✅ Todas las filas de ${sistemaActivo} completadas — buscando siguiente sistema activo...`, runId);
 
-      let detectado = false;
-      for (let intento = 1; intento <= 5; intento++) {
-        await navegarConRetries(page, `${ambiente.replace(/\/$/, "")}/ProcesoCierre/Procesar`);
-        await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
+      // Refresca la tabla y busca el próximo sistema con pendientes
+      await navegarConRetries(page, `${ambiente.replace(/\/$/, "")}/ProcesoCierre/Procesar`);
+      await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
 
-        hayPendientesRestantes = await page.evaluate(() => {
-          return Array.from(document.querySelectorAll("#myTable tbody tr td:nth-child(10)"))
-            .some(td => /(Pendiente|En Proceso)/i.test(td.innerText));
-        });
+      const filasActualizadas = page.locator("tbody tr");
+      let proximoSistema = null;
 
-        if (hayPendientesRestantes) {
-          logConsole(`🟢 Pendientes detectados en intento ${intento} — continúa el cierre.`, runId);
-          detectado = true;
+      for (const sis of ordenSistemas) {
+        if (!procesos.map(p => p.toUpperCase()).includes(sis)) continue;
+
+        const hayPendientes = await filasActualizadas.evaluateAll((trs, sis) => {
+          return trs.some((tr) => {
+            const tds = tr.querySelectorAll("td");
+            if (tds.length < 8) return false;
+            const sistema = tds[2]?.innerText.trim().toUpperCase();
+            const estado = tds[9]?.innerText.trim().toUpperCase();
+            return sistema === sis && /(PENDIENTE|EN PROCESO)/.test(estado);
+          });
+        }, sis);
+
+        if (hayPendientes) {
+          proximoSistema = sis;
           break;
         }
-
-        logConsole(`⏳ Intento ${intento}: aún no aparecen nuevos pendientes, reintentando...`, runId);
-        await page.waitForTimeout(5000); // espera entre intentos (5 segundos)
       }
 
-      if (!detectado) {
-        logConsole("✅ No se detectaron más pendientes tras varios reintentos.", runId);
+      if (proximoSistema && proximoSistema !== sistemaActivo) {
+        logConsole(`🔹 Cambiando al siguiente sistema: ${proximoSistema}`, runId);
+        ultimoSistemaLogueado = proximoSistema;
+        continue; // ⚡ vuelve al while con el nuevo sistema
+      } else {
+        logConsole("✅ No se encontraron más sistemas pendientes.", runId);
         break;
       }
     }
+
+    // Espera breve antes del próximo ciclo
+    await page.waitForTimeout(2000);
+
 
 
     await page.waitForTimeout(3000);
