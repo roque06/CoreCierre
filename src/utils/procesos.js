@@ -130,7 +130,7 @@ const preScripts = {
   "GENERACION SALDOS CONTABILIZADOS": ["Prey.sql"],
   "CARGA MAESTRO TARJETA DE CREDITO ITC": ["mtc1.sql", "mtc2.sql", "mtc4.sql", "mtc5.sql"],
   "CARGA TRANSACCIONES DIARIAS ITC": ["mtc3.sql"],
-  "FINALIZA CIERRE DIARIO": ["finaliza_cierre.sql"],
+  "FINALIZA CIERRE": ["finaliza_cierre.sql"],
 
 
 
