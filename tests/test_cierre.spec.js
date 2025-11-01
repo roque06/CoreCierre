@@ -260,7 +260,10 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
       }
 
       if (proximoSistema && proximoSistema !== sistemaActivo) {
-        logConsole(`🔹 Cambiando al siguiente sistema: ${proximoSistema}`, runId);
+        logConsole("==========================================", runId);
+        logConsole(`🚀 Iniciando fase ${proximoSistema}`, runId);
+        logConsole("==========================================", runId);
+
         ultimoSistemaLogueado = proximoSistema;
         continue; // ⚡ vuelve al while con el nuevo sistema
       } else {
