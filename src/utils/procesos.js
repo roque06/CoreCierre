@@ -662,7 +662,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
   function guardarCacheEstado(cache) {
     try {
       fs.writeFileSync(estadoCachePath, JSON.stringify(cache, null, 2), "utf-8");
-    } catch {}
+    } catch { }
   }
 
   // 🧩 NUEVO: función auxiliar para detectar si todas las fechas son iguales
@@ -857,7 +857,7 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
             const sistemaF = await filaF4.$eval("td:nth-child(3)", el => el.innerText.trim().toUpperCase());
             const fechaF = await filaF4.$eval("td:nth-child(7)", el => el.innerText.trim());
             if (sistemaF === "F4" && fechaF) fechasF4.push(fechaF);
-          } catch {}
+          } catch { }
         }
 
         // 🚫 Nueva validación: si todas las fechas F4 son iguales, no activar modo SQL
