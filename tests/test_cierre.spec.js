@@ -189,9 +189,13 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
         logConsole(`✅ ${descripcion} → ${final} (${duracion} min)`, runId);
 
         // 🔄 Recarga real del DOM tras cada proceso
-        await page.reload({ waitUntil: "load" });
+        await page.goto(`${ambiente.replace(/\/$/, "")}/ProcesoCierre/Procesar`, {
+          waitUntil: "load",
+          timeout: 60000,
+        });
+        await page.evaluate(() => location.reload(true));
         await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
-        logConsole("🔄 Página recargada para sincronizar estados.", runId);
+        logConsole("🔁 Recarga completa forzada del DOM y bypass de cache.", runId);
       }
     }
 
