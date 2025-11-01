@@ -6,13 +6,13 @@ process.env.ORACLE_HOME = "C:\\instantclient_21_13";
 const { test, chromium } = require("@playwright/test");
 const fs = require("fs");
 const path = require("path");
-const { navegarConRetries } = require("../src/utils/navegacion.js");
+const { navegarConRetries, esperarCompletado } = require("../src/utils/navegacion.js");
 const {
   ejecutarProceso,
   ejecutarPorHref,
   procesosEjecutadosGlobal,
   esperarHastaCompletado,
-  ejecutarF4FechaMayor, // ✅ AGREGADO: función especial para F4
+  ejecutarF4FechaMayor,
 } = require("../src/utils/procesos.js");
 const { logConsole, logWeb } = require("../src/utils/logger.js");
 
@@ -38,19 +38,44 @@ if (!conexion) {
 }
 const connectString = conexion.connectString;
 
-// --- Orden de ejecución ---
-const ordenSistemas = ["PRE", "F2", "MTC", "F3", "MON", "F4", "F5", "FIN"];
+// ============================================================
+// 🧩 RUTA Y CONTROL DE ESTADO PERSISTENTE
+// ============================================================
+const cachePath = path.join(__dirname, "../src/cache/estado_persistente.json");
+let estadoPersistente = {};
 
-// --- Estructura resumen ---
+try {
+  if (fs.existsSync(cachePath)) {
+    estadoPersistente = JSON.parse(fs.readFileSync(cachePath, "utf-8"));
+  }
+
+  if (!estadoPersistente[baseDatos]) estadoPersistente[baseDatos] = {};
+  for (const [desc, estado] of Object.entries(estadoPersistente[baseDatos])) {
+    if (estado === "COMPLETADO") delete estadoPersistente[baseDatos][desc];
+  }
+
+  logConsole(`🧩 Estado persistente cargado para ${baseDatos}`, runId);
+} catch {
+  estadoPersistente = {};
+  logConsole(`⚠️ No se pudo leer estado persistente, se iniciará limpio.`, runId);
+}
+
+function actualizarEstadoPersistente(descripcion, estado) {
+  if (!estadoPersistente[baseDatos]) estadoPersistente[baseDatos] = {};
+  estadoPersistente[baseDatos][descripcion] = estado;
+  fs.writeFileSync(cachePath, JSON.stringify(estadoPersistente, null, 2));
+}
+
+// ============================================================
+// 🔄 CONFIGURACIÓN GENERAL
+// ============================================================
+const ordenSistemas = ["PRE", "F2", "MTC", "F3", "MON", "F4", "F5", "F8", "FIN"];
 const resumen = { total: 0, completados: 0, errores: 0, detalle: [] };
 const inicioCierre = Date.now();
 
-// --- Helper functions ---
-function parseFechaDMY(fechaTxt) {
-  const [d, m, y] = fechaTxt.split("/").map(Number);
-  return new Date(y, m - 1, d);
-}
-
+// ============================================================
+// ▶️ TEST PRINCIPAL DE CIERRE
+// ============================================================
 test(`[${runId}] Cierre con selección de sistemas`, async () => {
   test.setTimeout(0);
 
@@ -71,29 +96,28 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   await page.locator("#NombreUsuario").fill("radames");
   await page.locator("#Password").fill("santa");
   await page.press("#Password", "Enter");
-
   await navegarConRetries(page, `${ambiente.replace(/\/$/, "")}/ProcesoCierre/Procesar`);
+
   let ultimoSistemaLogueado = null;
 
-  // 🔄 Bucle principal
+  // ============================================================
+  // 🔁 BUCLE PRINCIPAL — motor híbrido
+  // ============================================================
   while (true) {
     const filas = page.locator("tbody tr");
     const total = await filas.count();
     let encontrado = false;
 
-    logConsole(`▶ Analizando ${total} filas de procesos...`, runId);
-
     // --- Determinar sistema activo ---
     let sistemaActivo = null;
     for (const sis of ordenSistemas) {
-      if (!procesos.includes(sis)) continue;
+      if (!procesos.map(p => p.toUpperCase()).includes(sis)) continue;
       const hayPendientes = await filas.evaluateAll((trs, sis) => {
-        return trs.some((tr) => {
+        return trs.some(tr => {
           const tds = tr.querySelectorAll("td");
-          if (tds.length < 8) return false;
-          const sistema = tds[2]?.innerText.trim();
-          const estado = tds[9]?.innerText.trim();
-          return sistema === sis && /(Pendiente|Error|En Proceso)/i.test(estado);
+          const sistema = tds[2]?.innerText.trim().toUpperCase();
+          const estado = tds[9]?.innerText.trim().toUpperCase();
+          return sistema === sis && /(PENDIENTE|ERROR|EN PROCESO)/.test(estado);
         });
       }, sis);
       if (hayPendientes) {
@@ -103,119 +127,85 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
     }
 
     if (!sistemaActivo) {
-      logWeb("✅ No quedan procesos pendientes según configuración", runId);
-      logConsole("✅ No quedan procesos pendientes según configuración", runId);
-      break;
+      logConsole("⏸️ Revalidando posibles nuevas fases...", runId);
+      await page.waitForTimeout(5000);
+      await page.reload({ waitUntil: "load" });
+      const nuevosPendientes = await page.evaluate(() => {
+        const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
+        return filas.some(tr => {
+          const estado = tr.querySelectorAll("td")[9]?.innerText.trim().toUpperCase();
+          return estado === "PENDIENTE" || estado === "EN PROCESO";
+        });
+      });
+      if (!nuevosPendientes) {
+        logConsole("✅ Confirmado: no hay más procesos pendientes. Cierre completado.", runId);
+        break;
+      }
+      continue;
     }
 
     if (sistemaActivo !== ultimoSistemaLogueado) {
       logConsole("==========================================", runId);
       logConsole(`🚀 Iniciando fase ${sistemaActivo}`, runId);
       logConsole("==========================================", runId);
-      logWeb(`🔹 Sistema en ejecución: ${sistemaActivo}`, runId);
       ultimoSistemaLogueado = sistemaActivo;
     }
 
-    // --- Ejecutar procesos del sistema activo ---
+    // ============================================================
+    // ▶️ PROCESAMIENTO DE FILAS
+    // ============================================================
     for (let i = 0; i < total; i++) {
       const fila = filas.nth(i);
       if (!(await fila.isVisible())) continue;
-
       const celdas = fila.locator("td");
-      const sistema = (await celdas.nth(2).innerText().catch(() => "")).trim();
+      const sistema = (await celdas.nth(2).innerText().catch(() => "")).trim().toUpperCase();
       const descripcion = (await celdas.nth(4).innerText().catch(() => "")).trim();
-      const fecha = (await celdas.nth(6).innerText().catch(() => "")).trim();
       const estado = (await celdas.nth(9).innerText().catch(() => "")).trim();
 
       if (sistema !== sistemaActivo) continue;
+      logConsole(`• ${sistema} | ${descripcion} | Estado=${estado}`, runId);
 
-      // --- Verificar duplicados F4 ---
-      if (sistema === "F4") {
-        const duplicados = await filas.evaluateAll((trs, desc) => {
-          return trs
-            .map((tr) => {
-              const tds = tr.querySelectorAll("td");
-              return {
-                sistema: tds[2]?.innerText?.trim(),
-                descripcion: tds[4]?.innerText?.trim(),
-                fecha: tds[6]?.innerText?.trim(),
-              };
-            })
-            .filter((p) => p.sistema === "F4" && p.descripcion === desc);
-        }, descripcion);
-
-        if (duplicados.length > 1) {
-          const f1 = parseFechaDMY(duplicados[0].fecha);
-          const f2 = parseFechaDMY(duplicados[1].fecha);
-          const fechaMayor = f1 > f2 ? f1 : f2;
-          const fechaActual = parseFechaDMY(fecha);
-
-          if (fechaActual.getTime() === fechaMayor.getTime()) {
-            logConsole(`📆 Detectada nueva fecha (${fecha}) → Activando flujo F4 Fecha Mayor`, runId);
-            await ejecutarF4FechaMayor(page, baseDatos, connectString, runId); // ✅ llamada correcta
-            encontrado = true;
-            break;
-          } else {
-            logConsole(`❌ Fecha actual (${fecha}) no es la mayor (${fechaMayor.toLocaleDateString("es-ES")})`, runId);
-          }
-        }
-      }
-
-      logWeb(`• ${sistema} | ${descripcion} | Estado=${estado} | Fecha=${fecha}`, runId);
-      logConsole(`• ${sistema} | ${descripcion} | Estado=${estado} | Fecha=${fecha}`, runId);
-
-      // --- Solo ejecutar si está pendiente o con error ---
-      if (["Pendiente", "Error"].includes(estado)) {
-        const clave = `${sistema}|${descripcion}`;
-        if (procesosEjecutadosGlobal.has(clave)) {
-          logConsole(`⏭️ ${descripcion} — ya en ejecución, evitando doble clic.`, runId);
-          logWeb(`⏭️ ${descripcion} — ya en ejecución, evitando doble clic.`, runId);
-          continue;
-        }
-        procesosEjecutadosGlobal.set(clave, true);
-
+      if (["PENDIENTE", "ERROR"].includes(estado.toUpperCase())) {
         const inicioProceso = Date.now();
+        logConsole(`▶️ [${sistema}] ${descripcion} — INICIANDO`, runId);
+
+        // Simular progreso en vivo
+        const progresoInterval = setInterval(() => {
+          const transcurrido = ((Date.now() - inicioProceso) / 60000).toFixed(1);
+          logConsole(`⏳ [${sistema}] ${descripcion} — EN PROCESO (${transcurrido} min transcurridos)`, runId);
+        }, 30000);
+
         const resultado = await ejecutarProceso(page, sistema, baseDatos, connectString, runId);
-        const estadoFinal = resultado || "Desconocido";
-        const duracionMin = ((Date.now() - inicioProceso) / 60000).toFixed(2);
+        await esperarCompletado(page, descripcion);
+        clearInterval(progresoInterval);
 
+        const duracion = ((Date.now() - inicioProceso) / 60000).toFixed(2);
+        const final = resultado || "Desconocido";
         resumen.total++;
-        resumen.detalle.push({
-          sistema,
-          descripcion,
-          estado: estadoFinal,
-          duracion: duracionMin + " min",
-        });
+        resumen.detalle.push({ sistema, descripcion, estado: final, duracion: `${duracion} min` });
 
-        if (estadoFinal === "Completado") resumen.completados++;
-        else if (estadoFinal === "Error") resumen.errores++;
+        if (final === "Completado") resumen.completados++;
+        else if (final === "Error") resumen.errores++;
 
-        logConsole(`⏱️ Duración del proceso ${descripcion}: ${duracionMin} min`, runId);
-        logWeb(`⏱️ Duración del proceso ${descripcion}: ${duracionMin} min`, runId);
-
+        logConsole(`✅ [${sistema}] ${descripcion} → ${final} (${duracion} min)`, runId);
         encontrado = true;
         break;
       }
     }
 
-    if (!encontrado) await page.waitForTimeout(3000);
+    if (!encontrado) {
+      await page.waitForTimeout(3000);
+      await page.reload({ waitUntil: "load" });
+    }
   }
 
-  // --- 🧾 Resumen Final ---
-  const duracionTotal = ((Date.now() - inicioCierre) / 60000).toFixed(2);
-  const fechaEjecucion = new Date().toLocaleString("es-VE", {
-    dateStyle: "full",
-    timeStyle: "medium",
-  });
-
-  const resumenFinal = [];
-  resumenFinal.push("==========================================");
-  resumenFinal.push(`📊 RESUMEN FINAL DEL CIERRE [${runId}]`);
-  resumenFinal.push("==========================================");
-  resumenFinal.push(`🗓 Fecha de ejecución real: ${fechaEjecucion}`);
-  resumenFinal.push(`🧩 Instancia ejecutada: ${baseDatos}`);
-  resumenFinal.push(`🌐 Ambiente: ${ambiente}`);
-  resumenFinal.push("------------------------------------------");
+  // ============================================================
+  // 🧾 RESUMEN FINAL
+  // ============================================================
+  const totalMin = ((Date.now() - inicioCierre) / 60000).toFixed(2);
+  logConsole("==========================================", runId);
+  logConsole("📊 RESUMEN FINAL DEL CIERRE", runId);
+  logConsole("==========================================", runId);
 
   const fases = {};
   for (const p of resumen.detalle) {
@@ -234,26 +224,24 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
     return `${minutos} minuto${minutos > 1 ? "s" : ""}`;
   }
 
-  resumenFinal.push("⏱️ TIEMPO TOTAL POR FASE:");
+  logConsole("⏱️ TIEMPO TOTAL POR FASE:", runId);
   Object.keys(fases).forEach((fase) => {
     const tiempoLegible = formatoTiempoLegible(fases[fase]);
-    resumenFinal.push(`   • ${fase} — Suma total: ${tiempoLegible}`);
+    logConsole(`   • ${fase} — ${tiempoLegible}`, runId);
   });
-  resumenFinal.push("------------------------------------------");
 
+  logConsole("------------------------------------------", runId);
   for (const p of resumen.detalle) {
-    const icon = p.estado === "Completado" ? "✅" : p.estado === "Error" ? "❌" : "⏭️";
-    resumenFinal.push(`${icon} [${p.sistema}] ${p.descripcion} → ${p.estado} (Duración: ${p.duracion})`);
+    const icon =
+      p.estado === "Completado" ? "✅" : p.estado === "Error" ? "❌" : "⏭️";
+    logConsole(`${icon} [${p.sistema}] ${p.descripcion} → ${p.estado} | ⏱ ${p.duracion}`, runId);
   }
-
-  resumenFinal.push("------------------------------------------");
-  resumenFinal.push(`🕒 TOTAL TIEMPO TRANSCURRIDO: ${duracionTotal} min`);
-  resumenFinal.push("==========================================");
-
-  resumenFinal.forEach((linea) => {
-    logConsole(linea, runId);
-    logWeb(linea, runId);
-  });
+  logConsole("------------------------------------------", runId);
+  logConsole(`📊 Total procesos ejecutados: ${resumen.total}`, runId);
+  logConsole(`✅ Completados: ${resumen.completados}`, runId);
+  logConsole(`❌ Errores: ${resumen.errores}`, runId);
+  logConsole(`🕒 Tiempo total transcurrido: ${totalMin} min`, runId);
+  logConsole("==========================================", runId);
 
   await browser.close();
 });
