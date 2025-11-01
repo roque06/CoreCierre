@@ -217,12 +217,47 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
         .some(td => /(Pendiente|En Proceso)/i.test(td.innerText));
     });
 
+    // 🔁 Revalidar si hay nuevos pendientes antes de salir del bucle
     if (!hayPendientesRestantes) {
-      logConsole("✅ Todos los sistemas completados según configuración", runId);
+      logConsole("🔁 Revalidando tabla para detectar siguientes sistemas...", runId);
+      await navegarConRetries(page, `${ambiente.replace(/\/$/, "")}/ProcesoCierre/Procesar`);
+      await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
+
+      const filasActualizadas = page.locator("tbody tr");
+      let proximoSistema = null;
+
+      for (const sis of ordenSistemas) {
+        if (!procesos.map(p => p.toUpperCase()).includes(sis)) continue;
+
+        const hayPendientes = await filasActualizadas.evaluateAll((trs, sis) => {
+          return trs.some((tr) => {
+            const tds = tr.querySelectorAll("td");
+            if (tds.length < 8) return false;
+            const sistema = tds[2]?.innerText.trim().toUpperCase();
+            const estado = tds[9]?.innerText.trim().toUpperCase();
+            return sistema === sis && /(PENDIENTE|EN PROCESO)/.test(estado);
+          });
+        }, sis);
+
+        if (hayPendientes) {
+          proximoSistema = sis;
+          break;
+        }
+      }
+
+      if (proximoSistema && proximoSistema !== ultimoSistemaLogueado) {
+        logConsole(`🔹 Cambiando al siguiente sistema: ${proximoSistema}`, runId);
+        ultimoSistemaLogueado = proximoSistema;
+        continue; // 👉 regresa al inicio del while sin cortar el cierre
+      }
+
+      // Si de verdad no hay nada más pendiente, finalizar cierre
+      logConsole("✅ No quedan procesos pendientes según configuración", runId);
       break;
     }
 
     await page.waitForTimeout(3000);
+
   }
 
   // ============================================================
