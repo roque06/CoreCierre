@@ -27,7 +27,7 @@ if (!ambiente || !baseDatos || procesos.length === 0) {
   process.exit(1);
 }
 
-// --- Cargar connectString desde dbConnections.json ---
+// --- Cargar connectString ---
 const dbConnections = JSON.parse(
   fs.readFileSync(path.join(__dirname, "../src/config/dbConnections.json"), "utf-8")
 );
@@ -39,7 +39,7 @@ if (!conexion) {
 const connectString = conexion.connectString;
 
 // ============================================================
-// 🧩 RUTA Y CONTROL DE ESTADO PERSISTENTE
+// 🧩 Estado persistente
 // ============================================================
 const cachePath = path.join(__dirname, "../src/cache/estado_persistente.json");
 let estadoPersistente = {};
@@ -48,12 +48,10 @@ try {
   if (fs.existsSync(cachePath)) {
     estadoPersistente = JSON.parse(fs.readFileSync(cachePath, "utf-8"));
   }
-
   if (!estadoPersistente[baseDatos]) estadoPersistente[baseDatos] = {};
   for (const [desc, estado] of Object.entries(estadoPersistente[baseDatos])) {
     if (estado === "COMPLETADO") delete estadoPersistente[baseDatos][desc];
   }
-
   logConsole(`🧩 Estado persistente cargado para ${baseDatos}`, runId);
 } catch {
   estadoPersistente = {};
@@ -67,14 +65,14 @@ function actualizarEstadoPersistente(descripcion, estado) {
 }
 
 // ============================================================
-// 🔄 CONFIGURACIÓN GENERAL
+// ⚙️ Configuración
 // ============================================================
 const ordenSistemas = ["PRE", "F2", "MTC", "F3", "MON", "F4", "F5", "F8", "FIN"];
 const resumen = { total: 0, completados: 0, errores: 0, detalle: [] };
 const inicioCierre = Date.now();
 
 // ============================================================
-// ▶️ TEST PRINCIPAL DE CIERRE
+// ▶️ TEST PRINCIPAL
 // ============================================================
 test(`[${runId}] Cierre con selección de sistemas`, async () => {
   test.setTimeout(0);
@@ -103,13 +101,13 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   logConsole(`📄 Sistemas activos definidos: ${global.__sistemasActivos.join(", ")}`, runId);
 
   // ============================================================
-  // 🔁 BUCLE PRINCIPAL
+  // 🔁 Bucle principal
   // ============================================================
   while (true) {
     const filas = page.locator("tbody tr");
     const total = await filas.count();
 
-    // --- Buscar siguiente sistema activo ---
+    // --- Buscar siguiente sistema activo en orden ---
     let sistemaActivo = null;
     for (const sis of ordenSistemas) {
       if (!procesos.map(p => p.toUpperCase()).includes(sis)) continue;
@@ -141,7 +139,7 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
     }
 
     // ============================================================
-    // ▶️ PROCESAR FILAS DEL SISTEMA ACTIVO
+    // ▶️ Procesar filas de ese sistema
     // ============================================================
     for (let i = 0; i < total; i++) {
       const fila = filas.nth(i);
@@ -156,9 +154,10 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
       if (estado.toUpperCase() === "EN PROCESO") {
         logConsole(`⏳ ${descripcion} está EN PROCESO — esperando finalización...`, runId);
         await esperarCompletado(page, descripcion);
-        await page.reload({ waitUntil: "load" });
+        await page.goto(`${ambiente}/ProcesoCierre/Procesar`, { waitUntil: "load" });
+        await page.evaluate(() => location.reload(true));
         await page.waitForSelector("#myTable tbody tr");
-        logConsole("🔄 Página recargada tras espera de proceso en curso.", runId);
+        logConsole("🔁 Recarga completa del DOM tras esperar proceso en curso.", runId);
         continue;
       }
 
@@ -188,57 +187,47 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
 
         logConsole(`✅ ${descripcion} → ${final} (${duracion} min)`, runId);
 
-        // 🔄 Recarga real del DOM tras cada proceso
-        await page.goto(`${ambiente.replace(/\/$/, "")}/ProcesoCierre/Procesar`, {
-          waitUntil: "load",
-          timeout: 60000,
-        });
+        // 🔄 Recarga forzada tras ejecutar
+        await page.goto(`${ambiente}/ProcesoCierre/Procesar`, { waitUntil: "load" });
         await page.evaluate(() => location.reload(true));
         await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
-        logConsole("🔁 Recarga completa forzada del DOM y bypass de cache.", runId);
+        logConsole("🔁 Recarga completa forzada tras ejecutar proceso.", runId);
       }
     }
 
     // ============================================================
-    // 🔁 VALIDAR SI EL SISTEMA ACTUAL TERMINÓ
+    // 🔁 Validar si el sistema terminó
     // ============================================================
-    let todasFilasSistemaActualCompletadas = false;
-
+    let completado = false;
     for (let intento = 1; intento <= 5; intento++) {
-      todasFilasSistemaActualCompletadas = await page.evaluate((sis) => {
+      completado = await page.evaluate((sis) => {
         const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
-        const filasSis = filas.filter(tr => {
-          const tds = tr.querySelectorAll("td");
-          const sistema = tds[2]?.innerText.trim().toUpperCase();
-          return sistema === sis;
-        });
-        return filasSis.every(tr => {
+        const delSistema = filas.filter(tr => tr.querySelectorAll("td")[2]?.innerText.trim().toUpperCase() === sis);
+        return delSistema.every(tr => {
           const estado = tr.querySelectorAll("td")[9]?.innerText.trim().toUpperCase();
           return estado === "COMPLETADO" || estado === "OMITIDO";
         });
       }, sistemaActivo);
+      if (completado) break;
 
-      if (todasFilasSistemaActualCompletadas) break;
-
-      logConsole(`⏳ Verificando cierre completo de ${sistemaActivo} (intento ${intento}/5)...`, runId);
+      logConsole(`⏳ Verificando cierre de ${sistemaActivo} (intento ${intento}/5)...`, runId);
       await page.waitForTimeout(4000);
-      await page.reload({ waitUntil: "load" });
+      await page.goto(`${ambiente}/ProcesoCierre/Procesar`, { waitUntil: "load" });
+      await page.evaluate(() => location.reload(true));
       await page.waitForSelector("#myTable tbody tr");
-      logConsole("🔄 Página recargada durante polling de cierre de sistema.", runId);
+      logConsole("🔁 Recarga completa durante verificación de cierre.", runId);
     }
 
-    if (todasFilasSistemaActualCompletadas) {
-      logConsole(`✅ Todas las filas de ${sistemaActivo} completadas — buscando siguiente sistema...`, runId);
-
-      await page.reload({ waitUntil: "load" });
+    if (completado) {
+      logConsole(`✅ ${sistemaActivo} completado — buscando siguiente sistema...`, runId);
+      await page.goto(`${ambiente}/ProcesoCierre/Procesar`, { waitUntil: "load" });
+      await page.evaluate(() => location.reload(true));
       await page.waitForSelector("#myTable tbody tr");
-      logConsole("🔄 Página recargada para detectar nuevo sistema.", runId);
 
-      // Revalidar posible nueva fase
-      let proximoSistema = null;
+      let siguiente = null;
       for (const sis of ordenSistemas) {
         if (!procesos.map(p => p.toUpperCase()).includes(sis)) continue;
-        const hayPendientes = await page.evaluate((sis) => {
+        const hayPend = await page.evaluate((sis) => {
           const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
           return filas.some(tr => {
             const tds = tr.querySelectorAll("td");
@@ -247,53 +236,19 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
             return sistema === sis && /(PENDIENTE|EN PROCESO)/.test(estado);
           });
         }, sis);
-        if (hayPendientes) {
-          proximoSistema = sis;
+        if (hayPend) {
+          siguiente = sis;
           break;
         }
       }
 
-      if (proximoSistema && proximoSistema !== sistemaActivo) {
-        logConsole(`🚀 Iniciando fase ${proximoSistema}`, runId);
-        ultimoSistemaLogueado = proximoSistema;
+      if (siguiente && siguiente !== sistemaActivo) {
+        logConsole(`🚀 Nueva fase detectada: ${siguiente}`, runId);
+        ultimoSistemaLogueado = siguiente;
         continue;
       }
 
-      // Espera controlada y revalidación
-      for (let intento = 1; intento <= 5; intento++) {
-        logConsole(`⏳ Revalidando si surge nueva fase (intento ${intento}/5)...`, runId);
-        await page.waitForTimeout(5000);
-        await page.reload({ waitUntil: "load" });
-        await page.waitForSelector("#myTable tbody tr");
-        logConsole("🔄 Revalidando DOM tras recarga para buscar nueva fase.", runId);
-
-        let nuevoSistema = null;
-        for (const sis of ordenSistemas) {
-          if (!procesos.map(p => p.toUpperCase()).includes(sis)) continue;
-          const hayPendientes = await page.evaluate((sis) => {
-            const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
-            return filas.some(tr => {
-              const tds = tr.querySelectorAll("td");
-              const sistema = tds[2]?.innerText.trim().toUpperCase();
-              const estado = tds[9]?.innerText.trim().toUpperCase();
-              return sistema === sis && /(PENDIENTE|EN PROCESO)/.test(estado);
-            });
-          }, sis);
-
-          if (hayPendientes) {
-            nuevoSistema = sis;
-            break;
-          }
-        }
-
-        if (nuevoSistema && nuevoSistema !== sistemaActivo) {
-          logConsole(`🚀 Nueva fase detectada tras espera: ${nuevoSistema}`, runId);
-          ultimoSistemaLogueado = nuevoSistema;
-          continue;
-        }
-      }
-
-      logConsole("✅ No se encontraron más sistemas pendientes tras revalidar.", runId);
+      logConsole("✅ No hay más sistemas pendientes tras revalidar.", runId);
       break;
     }
 
@@ -301,10 +256,9 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   }
 
   // ============================================================
-  // 🧾 RESUMEN FINAL
+  // 📊 RESUMEN FINAL
   // ============================================================
   const totalMin = ((Date.now() - inicioCierre) / 60000).toFixed(2);
-
   logConsole("==========================================", runId);
   logConsole("📊 RESUMEN FINAL DEL CIERRE", runId);
   logConsole("==========================================", runId);
@@ -327,7 +281,6 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   logConsole("==========================================", runId);
   logConsole(`✅ Cierre completado según configuración (${totalMin} min)`, runId);
 
-  // 📝 Guardar resumen
   const carpetaLogs = path.join(__dirname, "../logs");
   if (!fs.existsSync(carpetaLogs)) fs.mkdirSync(carpetaLogs);
   const nombreArchivo = `resumen_cierre_${baseDatos}_${new Date().toISOString().slice(0, 10)}.log`;
@@ -336,4 +289,3 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
 
   await browser.close();
 });
-// ============================================================
