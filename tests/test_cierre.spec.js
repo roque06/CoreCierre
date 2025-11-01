@@ -212,49 +212,42 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
     }
 
     // 🔁 Verificar si quedan pendientes globales antes de continuar
-    const hayPendientesRestantes = await page.evaluate(() => {
+    // 🔁 Verificar si quedan pendientes globales antes de continuar
+    let hayPendientesRestantes = await page.evaluate(() => {
       return Array.from(document.querySelectorAll("#myTable tbody tr td:nth-child(10)"))
         .some(td => /(Pendiente|En Proceso)/i.test(td.innerText));
     });
 
-    // 🔁 Revalidar si hay nuevos pendientes antes de salir del bucle
+    // 🧩 Nueva validación con reintentos dinámicos
     if (!hayPendientesRestantes) {
-      logConsole("🔁 Revalidando tabla para detectar siguientes sistemas...", runId);
-      await navegarConRetries(page, `${ambiente.replace(/\/$/, "")}/ProcesoCierre/Procesar`);
-      await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
+      logConsole("🔁 Revalidando tabla para detectar siguientes sistemas (espera controlada)...", runId);
 
-      const filasActualizadas = page.locator("tbody tr");
-      let proximoSistema = null;
+      let detectado = false;
+      for (let intento = 1; intento <= 5; intento++) {
+        await navegarConRetries(page, `${ambiente.replace(/\/$/, "")}/ProcesoCierre/Procesar`);
+        await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
 
-      for (const sis of ordenSistemas) {
-        if (!procesos.map(p => p.toUpperCase()).includes(sis)) continue;
+        hayPendientesRestantes = await page.evaluate(() => {
+          return Array.from(document.querySelectorAll("#myTable tbody tr td:nth-child(10)"))
+            .some(td => /(Pendiente|En Proceso)/i.test(td.innerText));
+        });
 
-        const hayPendientes = await filasActualizadas.evaluateAll((trs, sis) => {
-          return trs.some((tr) => {
-            const tds = tr.querySelectorAll("td");
-            if (tds.length < 8) return false;
-            const sistema = tds[2]?.innerText.trim().toUpperCase();
-            const estado = tds[9]?.innerText.trim().toUpperCase();
-            return sistema === sis && /(PENDIENTE|EN PROCESO)/.test(estado);
-          });
-        }, sis);
-
-        if (hayPendientes) {
-          proximoSistema = sis;
+        if (hayPendientesRestantes) {
+          logConsole(`🟢 Pendientes detectados en intento ${intento} — continúa el cierre.`, runId);
+          detectado = true;
           break;
         }
+
+        logConsole(`⏳ Intento ${intento}: aún no aparecen nuevos pendientes, reintentando...`, runId);
+        await page.waitForTimeout(5000); // espera entre intentos (5 segundos)
       }
 
-      if (proximoSistema && proximoSistema !== ultimoSistemaLogueado) {
-        logConsole(`🔹 Cambiando al siguiente sistema: ${proximoSistema}`, runId);
-        ultimoSistemaLogueado = proximoSistema;
-        continue; // 👉 regresa al inicio del while sin cortar el cierre
+      if (!detectado) {
+        logConsole("✅ No se detectaron más pendientes tras varios reintentos.", runId);
+        break;
       }
-
-      // Si de verdad no hay nada más pendiente, finalizar cierre
-      logConsole("✅ No quedan procesos pendientes según configuración", runId);
-      break;
     }
+
 
     await page.waitForTimeout(3000);
 
