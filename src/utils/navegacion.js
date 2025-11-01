@@ -25,32 +25,44 @@ async function navegarConRetries(page, url, maxRetries = 3) {
  */
 async function esperarCompletado(page, descripcion, runId = "GLOBAL") {
   const filaSelector = `tbody tr:has-text("${descripcion}")`;
+  const inicio = Date.now(); // 🕒 Para medir duración total
   let estado = "";
 
   while (true) {
     try {
-      // 🔄 Refrescar la tabla en cada ciclo para obtener el estado real del backend
+      // 🔄 Refrescar la tabla para obtener estado real del backend
       await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
-      await page.waitForSelector("#myTable tbody tr", { timeout: 15000 });
+      await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
 
       const fila = page.locator(filaSelector);
+      if (!(await fila.count())) {
+        logConsole(`⚠️ No se encontró la fila para "${descripcion}" tras recarga. Reintentando...`, runId);
+        await page.waitForTimeout(5000);
+        continue;
+      }
+
       const estadoCell = fila.locator("td").nth(9);
       estado = ((await estadoCell.textContent()) || "").trim();
 
+      // 🧩 Estado final detectado
       if (["Completado", "Error"].includes(estado)) {
-        logConsole(`📌 Estado final de "${descripcion}": ${estado}`, runId);
+        const duracion = ((Date.now() - inicio) / 60000).toFixed(2);
+        logConsole(`📌 Estado final de "${descripcion}": ${estado} (${duracion} min)`, runId);
         return estado;
       }
 
-      logConsole(`⏳ "${descripcion}" sigue en estado: ${estado || "N/A"} → esperando...`, runId);
+      // ⏳ Estado intermedio
+      const transcurrido = ((Date.now() - inicio) / 60000).toFixed(1);
+      logConsole(`⏳ "${descripcion}" sigue en estado: ${estado || "N/A"} — ${transcurrido} min transcurridos...`, runId);
     } catch (err) {
       logConsole(`⚠️ Error leyendo estado de "${descripcion}": ${err.message}`, runId);
     }
 
-    // 🕒 Esperar 30 segundos antes de volver a intentar
+    // 🕒 Esperar 30 s antes de volver a revisar
     await page.waitForTimeout(30000);
   }
 }
+
 
 
 /**
