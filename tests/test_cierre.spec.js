@@ -212,23 +212,79 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
     }
 
     // 🔁 Verificar si quedan pendientes globales antes de continuar
-    // 🔁 Verificar si quedan pendientes globales antes de continuar
+
     // ============================================================
-    // 🔁 Validar si el sistema actual finalizó completamente
+    // 🔁 Validar si el sistema actual finalizó completamente (con polling)
     // ============================================================
-    const todasFilasSistemaActualCompletadas = await page.evaluate((sis) => {
-      const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
-      const filasSistema = filas.filter(tr => {
-        const tds = tr.querySelectorAll("td");
-        const sistema = tds[2]?.innerText.trim().toUpperCase();
-        return sistema === sis;
-      });
-      if (filasSistema.length === 0) return false;
-      return filasSistema.every(tr => {
-        const estado = tr.querySelectorAll("td")[9]?.innerText.trim().toUpperCase();
-        return estado === "COMPLETADO" || estado === "OMITIDO";
-      });
-    }, sistemaActivo);
+    let todasFilasSistemaActualCompletadas = false;
+
+    for (let intento = 1; intento <= 5; intento++) {
+      todasFilasSistemaActualCompletadas = await page.evaluate((sis) => {
+        const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
+        const filasSistema = filas.filter(tr => {
+          const tds = tr.querySelectorAll("td");
+          const sistema = tds[2]?.innerText.trim().toUpperCase();
+          return sistema === sis;
+        });
+        if (filasSistema.length === 0) return false;
+        return filasSistema.every(tr => {
+          const estado = tr.querySelectorAll("td")[9]?.innerText.trim().toUpperCase();
+          return estado === "COMPLETADO" || estado === "OMITIDO";
+        });
+      }, sistemaActivo);
+
+      if (todasFilasSistemaActualCompletadas) break;
+
+      logConsole(`⏳ Verificando cierre completo de ${sistemaActivo} (intento ${intento}/5)...`, runId);
+      await page.waitForTimeout(4000);
+      await navegarConRetries(page, `${ambiente.replace(/\/$/, "")}/ProcesoCierre/Procesar`);
+      await page.waitForSelector("#myTable tbody tr", { timeout: 20000 });
+    }
+
+    if (todasFilasSistemaActualCompletadas) {
+      logConsole(`✅ Todas las filas de ${sistemaActivo} completadas — buscando siguiente sistema activo...`, runId);
+
+      // Refresca la tabla y busca el próximo sistema con pendientes
+      await navegarConRetries(page, `${ambiente.replace(/\/$/, "")}/ProcesoCierre/Procesar`);
+      await page.waitForSelector("#myTable tbody tr", { timeout: 30000 });
+
+      const filasActualizadas = page.locator("tbody tr");
+      let proximoSistema = null;
+
+      for (const sis of ordenSistemas) {
+        if (!procesos.map(p => p.toUpperCase()).includes(sis)) continue;
+
+        const hayPendientes = await filasActualizadas.evaluateAll((trs, sis) => {
+          return trs.some((tr) => {
+            const tds = tr.querySelectorAll("td");
+            if (tds.length < 8) return false;
+            const sistema = tds[2]?.innerText.trim().toUpperCase();
+            const estado = tds[9]?.innerText.trim().toUpperCase();
+            return sistema === sis && /(PENDIENTE|EN PROCESO)/.test(estado);
+          });
+        }, sis);
+
+        if (hayPendientes) {
+          proximoSistema = sis;
+          break;
+        }
+      }
+
+      if (proximoSistema && proximoSistema !== sistemaActivo) {
+        logConsole("==========================================", runId);
+        logConsole(`🚀 Iniciando fase ${proximoSistema}`, runId);
+        logConsole("==========================================", runId);
+        logConsole(`🔹 Cambiando al siguiente sistema: ${proximoSistema}`, runId);
+        ultimoSistemaLogueado = proximoSistema;
+        continue; // ⚡ vuelve al while con el nuevo sistema
+      } else {
+        logConsole("✅ No se encontraron más sistemas pendientes.", runId);
+        break;
+      }
+    }
+
+    await page.waitForTimeout(2000);
+
 
     if (todasFilasSistemaActualCompletadas) {
       logConsole(`✅ Todas las filas de ${sistemaActivo} completadas — buscando siguiente sistema activo...`, runId);
