@@ -152,7 +152,7 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
     }
 
     // ============================================================
-    // ▶️ PROCESAMIENTO DE FILAS
+    // ▶️ PROCESAMIENTO DE FILAS (con cache persistente)
     // ============================================================
     for (let i = 0; i < total; i++) {
       const fila = filas.nth(i);
@@ -165,9 +165,35 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
       if (sistema !== sistemaActivo) continue;
       logConsole(`• ${sistema} | ${descripcion} | Estado=${estado}`, runId);
 
+      const claveCache = `${sistema}|${descripcion}`;
+      const estadoPrevio = estadoPersistente[baseDatos]?.[claveCache];
+
+      // 🧠 1️⃣ Si el proceso estaba en ejecución antes del reinicio → esperarlo
+      if (estadoPrevio === "EN PROCESO") {
+        logConsole(`⏳ Retomando proceso previo "${descripcion}" — esperando que finalice...`, runId);
+        await esperarCompletado(page, descripcion);
+        actualizarEstadoPersistente(claveCache, "COMPLETADO");
+        logConsole(`✅ "${descripcion}" completado tras reanudación.`, runId);
+        encontrado = true;
+        break;
+      }
+
+      // 🧠 2️⃣ Si el proceso ya figura EN PROCESO en pantalla → esperarlo
+      if (estado.toUpperCase() === "EN PROCESO") {
+        logConsole(`⏳ "${descripcion}" está en ejecución actualmente — esperando finalización...`, runId);
+        actualizarEstadoPersistente(claveCache, "EN PROCESO");
+        await esperarCompletado(page, descripcion);
+        actualizarEstadoPersistente(claveCache, "COMPLETADO");
+        logConsole(`✅ "${descripcion}" finalizó correctamente.`, runId);
+        encontrado = true;
+        break;
+      }
+
+      // 🧩 3️⃣ Ejecutar procesos pendientes o con error normalmente
       if (["PENDIENTE", "ERROR"].includes(estado.toUpperCase())) {
         const inicioProceso = Date.now();
         logConsole(`▶️ [${sistema}] ${descripcion} — INICIANDO`, runId);
+        actualizarEstadoPersistente(claveCache, "EN PROCESO");
 
         // Simular progreso en vivo
         const progresoInterval = setInterval(() => {
@@ -181,6 +207,8 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
 
         const duracion = ((Date.now() - inicioProceso) / 60000).toFixed(2);
         const final = resultado || "Desconocido";
+        actualizarEstadoPersistente(claveCache, final.toUpperCase());
+
         resumen.total++;
         resumen.detalle.push({ sistema, descripcion, estado: final, duracion: `${duracion} min` });
 
