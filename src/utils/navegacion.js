@@ -89,7 +89,7 @@ async function esperarEstadoTabla(page, descripcion, reintento = 0) {
         .toUpperCase()
         .trim();
 
-      if (descCelda.includes(descNormal)) {
+      if (descCelda.trim() === descNormal.trim()) {
         const estadoCelda = ((await celdas.nth(9).textContent()) || "").trim();
         logConsole(`📄 Estado leído para "${descripcion}": ${estadoCelda}`);
         return estadoCelda || "Desconocido";
