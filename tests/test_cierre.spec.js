@@ -206,23 +206,19 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
 
         // Simular progreso en vivo (verificación real antes de loguear)
         // Simular progreso en vivo (verificación real antes de loguear)
-        const progresoInterval = setInterval(async () => {
+        // Simular progreso en vivo (seguro y sin depender del DOM)
+        const progresoInterval = setInterval(() => {
           try {
             const transcurrido = ((Date.now() - inicioProceso) / 60000).toFixed(1);
-            const sigueEnProceso = await page.evaluate((desc) => {
-              const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
-              return filas.some(tr => {
-                const celdas = tr.querySelectorAll("td");
-                const d = celdas[4]?.innerText.trim();
-                const estado = celdas[9]?.innerText.trim().toUpperCase();
-                return d.includes(desc) && estado === "EN PROCESO";
-              });
-            }, descripcion);
-            if (sigueEnProceso) {
-              logConsole(`⏳ [${sistema}] ${descripcion} — EN PROCESO (${transcurrido} min transcurridos)`, runId);
-            }
-          } catch (_) { }
+            logConsole(`⏳ [${sistema}] ${descripcion} — EN PROCESO (${transcurrido} min transcurridos)`, runId);
+          } catch (err) {
+            logConsole(`⚠️ Error al calcular progreso de ${descripcion}: ${err.message}`, runId);
+          }
         }, 30000);
+
+        // 🧩 Log inmediato al iniciar (para que se vea desde el principio)
+        logConsole(`⏳ [${sistema}] ${descripcion} — EN PROCESO (0.0 min transcurridos)`, runId);
+
 
         // 🧩 Log inmediato al iniciar, para que se vea desde el principio
         logConsole(`⏳ [${sistema}] ${descripcion} — EN PROCESO (0.0 min transcurridos)`, runId);
