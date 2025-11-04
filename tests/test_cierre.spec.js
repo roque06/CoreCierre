@@ -80,9 +80,18 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   test.setTimeout(0);
 
   const browser = await chromium.launch({
-    channel: "msedge",
-    headless: false,
-    args: ["--start-maximized", "--disable-infobars", "--no-default-browser-check"],
+    channel: undefined, // ✅ Forzar uso de Chromium embebido, no Edge
+    executablePath: undefined,
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--disable-infobars",
+      "--disable-extensions",
+      "--disable-background-networking",
+      "--start-maximized",
+    ],
   });
 
   const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: null });
@@ -195,11 +204,29 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
         logConsole(`▶️ [${sistema}] ${descripcion} — INICIANDO`, runId);
         actualizarEstadoPersistente(claveCache, "EN PROCESO");
 
-        // Simular progreso en vivo
-        const progresoInterval = setInterval(() => {
-          const transcurrido = ((Date.now() - inicioProceso) / 60000).toFixed(1);
-          logConsole(`⏳ [${sistema}] ${descripcion} — EN PROCESO (${transcurrido} min transcurridos)`, runId);
+        // Simular progreso en vivo (verificación real antes de loguear)
+        // Simular progreso en vivo (verificación real antes de loguear)
+        const progresoInterval = setInterval(async () => {
+          try {
+            const transcurrido = ((Date.now() - inicioProceso) / 60000).toFixed(1);
+            const sigueEnProceso = await page.evaluate((desc) => {
+              const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
+              return filas.some(tr => {
+                const celdas = tr.querySelectorAll("td");
+                const d = celdas[4]?.innerText.trim();
+                const estado = celdas[9]?.innerText.trim().toUpperCase();
+                return d.includes(desc) && estado === "EN PROCESO";
+              });
+            }, descripcion);
+            if (sigueEnProceso) {
+              logConsole(`⏳ [${sistema}] ${descripcion} — EN PROCESO (${transcurrido} min transcurridos)`, runId);
+            }
+          } catch (_) { }
         }, 30000);
+
+        // 🧩 Log inmediato al iniciar, para que se vea desde el principio
+        logConsole(`⏳ [${sistema}] ${descripcion} — EN PROCESO (0.0 min transcurridos)`, runId);
+
 
         const resultado = await ejecutarProceso(page, sistema, baseDatos, connectString, runId);
         await esperarCompletado(page, descripcion);
@@ -225,6 +252,25 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
       await page.waitForTimeout(3000);
       await page.reload({ waitUntil: "load" });
     }
+  }
+
+  // ============================================================
+  // 🧩 VALIDACIÓN GLOBAL FINAL
+  // ============================================================
+  await page.reload({ waitUntil: "load" });
+  const quedanPendientes = await page.$$eval("#myTable tbody tr", trs =>
+    trs.some(tr => {
+      const celdas = tr.querySelectorAll("td");
+      if (celdas.length < 10) return false;
+      const estado = celdas[9].innerText.trim().toUpperCase();
+      return ["PENDIENTE", "EN PROCESO", "ERROR"].includes(estado);
+    })
+  );
+
+  if (quedanPendientes) {
+    logConsole("⏸️ Aún quedan procesos pendientes o en ejecución. No se imprimirá el resumen hasta completar todo.", runId);
+    await browser.close();
+    return;
   }
 
   // ============================================================
