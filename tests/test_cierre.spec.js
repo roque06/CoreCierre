@@ -204,8 +204,7 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
         logConsole(`▶️ [${sistema}] ${descripcion} — INICIANDO`, runId);
         actualizarEstadoPersistente(claveCache, "EN PROCESO");
 
-        // Simular progreso en vivo (verificación real antes de loguear)
-    
+        // 🧩 Simular progreso en vivo (seguro y sin depender del DOM)
         const progresoInterval = setInterval(() => {
           try {
             const transcurrido = ((Date.now() - inicioProceso) / 60000).toFixed(1);
@@ -217,19 +216,6 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
 
         // 🧩 Log inmediato al iniciar (para que se vea desde el principio)
         logConsole(`⏳ [${sistema}] ${descripcion} — EN PROCESO (0.0 min transcurridos)`, runId);
-
-
-        // 🧩 Log inmediato al iniciar (para que se vea desde el principio)
-        logConsole(`⏳ [${sistema}] ${descripcion} — EN PROCESO (0.0 min transcurridos)`, runId);
-
-
-        // 🧩 Log inmediato al iniciar (para que se vea desde el principio)
-        logConsole(`⏳ [${sistema}] ${descripcion} — EN PROCESO (0.0 min transcurridos)`, runId);
-
-
-        // 🧩 Log inmediato al iniciar, para que se vea desde el principio
-        logConsole(`⏳ [${sistema}] ${descripcion} — EN PROCESO (0.0 min transcurridos)`, runId);
-
 
         const resultado = await ejecutarProceso(page, sistema, baseDatos, connectString, runId);
         await esperarCompletado(page, descripcion);
@@ -249,6 +235,7 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
         encontrado = true;
         break;
       }
+
     }
 
     if (!encontrado) {
