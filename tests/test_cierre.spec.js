@@ -205,8 +205,7 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
         actualizarEstadoPersistente(claveCache, "EN PROCESO");
 
         // Simular progreso en vivo (verificación real antes de loguear)
-        // 🧩 Simular progreso en vivo (seguro y sin depender del DOM)
-        // 🧩 Simular progreso en vivo (seguro y sin depender del DOM)
+    
         const progresoInterval = setInterval(() => {
           try {
             const transcurrido = ((Date.now() - inicioProceso) / 60000).toFixed(1);
