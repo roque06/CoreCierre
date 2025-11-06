@@ -319,12 +319,19 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
 
     quedanPendientesFinal = await page.$$eval("#myTable tbody tr", trs =>
       trs.some(tr => {
+        const style = window.getComputedStyle(tr);
+        if (style.display === "none" || style.visibility === "hidden") return false;
+
         const celdas = tr.querySelectorAll("td");
         if (celdas.length < 10) return false;
-        const estado = celdas[9].innerText.trim().toUpperCase();
+
+        const estadoRaw = celdas[9]?.innerText || "";
+        const estado = estadoRaw.replace(/\s+/g, " ").trim().toUpperCase();
+
         return ["PENDIENTE", "EN PROCESO", "ERROR"].includes(estado);
       })
     );
+
 
     if (!quedanPendientesFinal) break;
     logConsole(`⏳ Validación final intento ${intento}: aún hay procesos visibles en ejecución...`, runId);
