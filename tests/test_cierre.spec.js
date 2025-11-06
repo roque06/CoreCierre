@@ -292,33 +292,37 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
 
   }
 
-  // ============================================================
-  // 🧩 VALIDACIÓN GLOBAL FINAL
-  // ============================================================
-  const quedanPendientes = await page.evaluate((procesosSeleccionados) => {
-    const seleccionados = procesosSeleccionados.map(p => p.toUpperCase());
-    const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
+  // 🧩 VALIDACIÓN GLOBAL FINAL (forzada) — también filtrada por fases seleccionadas
+  let quedanPendientesFinal = true;
+  for (let intento = 1; intento <= 3; intento++) {
+    await page.waitForTimeout(4000);
+    await page.reload({ waitUntil: "load" });
 
-    return filas.some(tr => {
-      const style = window.getComputedStyle(tr);
-      if (style.display === "none" || style.visibility === "hidden") return false;
+    quedanPendientesFinal = await page.evaluate((procesosSeleccionados) => {
+      const seleccionados = procesosSeleccionados.map(p => p.toUpperCase());
+      const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
 
-      const celdas = tr.querySelectorAll("td");
-      if (celdas.length < 10) return false;
+      return filas.some(tr => {
+        const style = window.getComputedStyle(tr);
+        if (style.display === "none" || style.visibility === "hidden") return false;
 
-      const sistema = (celdas[2]?.innerText || "").trim().toUpperCase();
-      const estadoRaw = (celdas[9]?.innerText || "").trim().toUpperCase();
+        const celdas = tr.querySelectorAll("td");
+        if (celdas.length < 10) return false;
 
-      // ⚙️ Ignorar filas que no pertenecen a fases seleccionadas
-      if (!seleccionados.includes(sistema)) return false;
+        const sistema = (celdas[2]?.innerText || "").trim().toUpperCase();
+        const estadoRaw = (celdas[9]?.innerText || "").replace(/\s+/g, " ").trim().toUpperCase();
 
-      // ⚙️ Solo cuenta como pendiente si sigue activo
-      return ["PENDIENTE", "EN PROCESO", "ERROR"].includes(estadoRaw);
-    });
-  }, procesos);
+        if (!seleccionados.includes(sistema)) return false;
+        return ["PENDIENTE", "EN PROCESO", "ERROR"].includes(estadoRaw);
+      });
+    }, procesos);
 
-  if (quedanPendientes) {
-    logConsole("⏸️ Aún quedan procesos pendientes o en ejecución dentro de las fases seleccionadas. No se imprimirá el resumen hasta completar todo.", runId);
+    if (!quedanPendientesFinal) break;
+    logConsole(`⏳ Validación final intento ${intento}: aún hay procesos visibles en ejecución dentro de las fases seleccionadas...`, runId);
+  }
+
+  if (quedanPendientesFinal) {
+    logConsole("⏸️ Persisten procesos pendientes tras múltiples verificaciones (solo de las fases seleccionadas). No se imprimirá el resumen aún.", runId);
     await browser.close();
     return;
   }
