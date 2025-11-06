@@ -139,46 +139,61 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
     if (!sistemaActivo) {
       logConsole("⏸️ Revalidando posibles nuevas fases...", runId);
 
-      // 🔹 Nueva lógica: revisar todas las fases seleccionadas
-      let siguenPendientes = false;
+      let cierreListo = false;
 
       for (let intento = 1; intento <= 3; intento++) {
         await page.waitForTimeout(4000);
         await page.reload({ waitUntil: "load" });
 
-        // 🔎 Evalúa la tabla completa
-        siguenPendientes = await page.evaluate(() => {
+        // 🔎 Escanear tabla y detectar solo fases seleccionadas con procesos activos
+        const fasesPendientes = await page.evaluate((procesosSeleccionados) => {
+          const seleccionados = procesosSeleccionados.map(p => p.toUpperCase());
           const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
-          return filas.some(tr => {
+          const pendientes = new Set();
+
+          for (const tr of filas) {
             const style = window.getComputedStyle(tr);
-            if (style.display === "none" || style.visibility === "hidden") return false;
+            if (style.display === "none" || style.visibility === "hidden") continue;
 
             const celdas = tr.querySelectorAll("td");
-            if (celdas.length < 10) return false;
+            if (celdas.length < 10) continue;
 
             const sistema = (celdas[2]?.innerText || "").trim().toUpperCase();
             const estado = (celdas[9]?.innerText || "").trim().toUpperCase();
 
-            // ⚙️ Ignora filas sin badge o con estados finales
-            if (!estado || ["COMPLETADO", "FINALIZADO", "T", "S", "OK"].includes(estado)) return false;
+            // ⚙️ Ignorar filas de sistemas no seleccionados
+            if (!seleccionados.includes(sistema)) continue;
 
-            // ⚙️ Solo cuenta si pertenece a un sistema seleccionado y está activo
-            return ["PENDIENTE", "EN PROCESO", "ERROR"].includes(estado);
-          });
-        });
+            // ⚙️ Ignorar estados finales
+            if (!estado || ["COMPLETADO", "FINALIZADO", "T", "S", "OK"].includes(estado)) continue;
 
-        if (!siguenPendientes) {
-          logConsole(`✅ Confirmado: no hay procesos pendientes (intento ${intento}).`, runId);
+            // ⚙️ Solo marcar como pendiente si sigue activo
+            if (["PENDIENTE", "EN PROCESO", "ERROR"].includes(estado)) {
+              pendientes.add(sistema);
+            }
+          }
+
+          return Array.from(pendientes);
+        }, procesos);
+
+        // 🔹 Si no hay pendientes, todas las fases seleccionadas están cerradas
+        if (fasesPendientes.length === 0) {
+          logConsole(`✅ Confirmado: todas las fases seleccionadas (${procesos.join(", ")}) están completadas.`, runId);
           cierreCompleto = true;
+          cierreListo = true;
           break;
         }
 
-        logConsole(`⏳ Validación de nuevas fases intento ${intento}: aún hay procesos activos...`, runId);
+        logConsole(
+          `⏳ Validación intento ${intento}: aún hay fases pendientes → ${fasesPendientes.join(", ")}`,
+          runId
+        );
       }
 
-      if (cierreCompleto) break;
+      if (cierreListo) break;
       continue;
     }
+
 
 
     if (sistemaActivo !== ultimoSistemaLogueado) {
