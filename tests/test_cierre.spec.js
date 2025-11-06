@@ -137,20 +137,47 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
 
     if (!sistemaActivo) {
       logConsole("⏸️ Revalidando posibles nuevas fases...", runId);
-      await page.waitForTimeout(5000);
-      await page.reload({ waitUntil: "load" });
-      const nuevosPendientes = await page.evaluate(() => {
+
+      // Espera unos segundos para dar tiempo a que el DOM y backend actualicen
+      for (let intento = 1; intento <= 3; intento++) {
+        await page.waitForTimeout(4000);
+        await page.reload({ waitUntil: "load" });
+
+        const quedanPendientes = await page.evaluate(() => {
+          const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
+          return filas.some(tr => {
+            const estado = tr.querySelectorAll("td")[9]?.innerText.trim().toUpperCase();
+            // ahora incluye también filas que puedan estar vacías (seguro para salida)
+            return ["PENDIENTE", "EN PROCESO", "ERROR"].includes(estado);
+          });
+        });
+
+        if (!quedanPendientes) {
+          logConsole(`✅ Confirmado: no hay más procesos pendientes (intento ${intento}).`, runId);
+          break;
+        }
+
+        logConsole(`⏳ Validación de nuevas fases intento ${intento}: aún hay procesos activos...`, runId);
+
+        // Si es el último intento y aún hay procesos visibles, sigue el bucle
+        if (intento === 3) continue;
+      }
+
+      // 🧩 Verificación final fuera del bucle interno
+      const siguePendiente = await page.evaluate(() => {
         const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
         return filas.some(tr => {
           const estado = tr.querySelectorAll("td")[9]?.innerText.trim().toUpperCase();
-          return estado === "PENDIENTE" || estado === "EN PROCESO";
+          return ["PENDIENTE", "EN PROCESO", "ERROR"].includes(estado);
         });
       });
-      if (!nuevosPendientes) {
+
+      if (!siguePendiente) {
         logConsole("✅ Confirmado: no hay más procesos pendientes. Cierre completado.", runId);
-        break;
+        break; // ✅ Esto ahora saldrá del while
       }
-      continue;
+
+      continue; // 🔄 sigue el while si todavía hay algo pendiente
     }
 
     if (sistemaActivo !== ultimoSistemaLogueado) {
