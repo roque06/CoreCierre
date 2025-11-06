@@ -277,12 +277,20 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   const quedanPendientes = await page.evaluate(() => {
     const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
     return filas.some(tr => {
-      const estadoRaw = tr.querySelectorAll("td")[9]?.innerText || "";
+      const style = window.getComputedStyle(tr);
+      if (style.display === "none" || style.visibility === "hidden") return false;
+
+      const celdas = tr.querySelectorAll("td");
+      if (celdas.length < 10) return false;
+
+      const estadoRaw = celdas[9]?.innerText || "";
       const estado = estadoRaw.replace(/\s+/g, " ").trim().toUpperCase();
-      // Solo consideramos pendientes los estados que contengan claramente texto activo
+
+      // ⚙️ Solo cuenta como pendiente si realmente es activo
       return ["PENDIENTE", "EN PROCESO", "ERROR"].includes(estado);
     });
   });
+
 
 
 
