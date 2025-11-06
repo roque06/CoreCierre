@@ -295,8 +295,11 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   // ============================================================
   // 🧩 VALIDACIÓN GLOBAL FINAL
   // ============================================================
-  const quedanPendientes = await page.evaluate(() => {
+  // 🧩 VALIDACIÓN GLOBAL FINAL (filtrada por fases seleccionadas)
+  const quedanPendientes = await page.evaluate((procesosSeleccionados) => {
+    const seleccionados = procesosSeleccionados.map(p => p.toUpperCase());
     const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
+
     return filas.some(tr => {
       const style = window.getComputedStyle(tr);
       if (style.display === "none" || style.visibility === "hidden") return false;
@@ -304,19 +307,23 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
       const celdas = tr.querySelectorAll("td");
       if (celdas.length < 10) return false;
 
-      const estadoRaw = celdas[9]?.innerText || "";
-      const estado = estadoRaw.replace(/\s+/g, " ").trim().toUpperCase();
+      const sistema = (celdas[2]?.innerText || "").trim().toUpperCase();
+      const estadoRaw = (celdas[9]?.innerText || "").trim().toUpperCase();
 
-      // ⚙️ Solo cuenta como pendiente si realmente es activo
-      return ["PENDIENTE", "EN PROCESO", "ERROR"].includes(estado);
+      // ⚙️ Ignorar filas que no pertenecen a fases seleccionadas
+      if (!seleccionados.includes(sistema)) return false;
+
+      // ⚙️ Solo cuenta como pendiente si sigue activo
+      return ["PENDIENTE", "EN PROCESO", "ERROR"].includes(estadoRaw);
     });
-  });
+  }, procesos);
 
   if (quedanPendientes) {
-    logConsole("⏸️ Aún quedan procesos pendientes o en ejecución. No se imprimirá el resumen hasta completar todo.", runId);
+    logConsole("⏸️ Aún quedan procesos pendientes o en ejecución dentro de las fases seleccionadas. No se imprimirá el resumen hasta completar todo.", runId);
     await browser.close();
     return;
   }
+
 
   // ============================================================
   // 🧩 VALIDACIÓN GLOBAL FINAL (forzada tras salir del bucle principal)
