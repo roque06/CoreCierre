@@ -274,15 +274,17 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   // ============================================================
   // 🧩 VALIDACIÓN GLOBAL FINAL
   // ============================================================
-  await page.reload({ waitUntil: "load" });
-  const quedanPendientes = await page.$$eval("#myTable tbody tr", trs =>
-    trs.some(tr => {
-      const celdas = tr.querySelectorAll("td");
-      if (celdas.length < 10) return false;
-      const estado = celdas[9].innerText.trim().toUpperCase();
+  const quedanPendientes = await page.evaluate(() => {
+    const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
+    return filas.some(tr => {
+      const estadoRaw = tr.querySelectorAll("td")[9]?.innerText || "";
+      const estado = estadoRaw.replace(/\s+/g, " ").trim().toUpperCase();
+      // Solo consideramos pendientes los estados que contengan claramente texto activo
       return ["PENDIENTE", "EN PROCESO", "ERROR"].includes(estado);
-    })
-  );
+    });
+  });
+
+
 
   if (quedanPendientes) {
     logConsole("⏸️ Aún quedan procesos pendientes o en ejecución. No se imprimirá el resumen hasta completar todo.", runId);
