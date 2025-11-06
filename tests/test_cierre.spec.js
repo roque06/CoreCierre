@@ -146,11 +146,20 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
         const quedanPendientes = await page.evaluate(() => {
           const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
           return filas.some(tr => {
-            const estado = tr.querySelectorAll("td")[9]?.innerText.trim().toUpperCase();
-            // ahora incluye también filas que puedan estar vacías (seguro para salida)
+            const style = window.getComputedStyle(tr);
+            if (style.display === "none" || style.visibility === "hidden") return false;
+
+            const celdas = tr.querySelectorAll("td");
+            if (celdas.length < 10) return false;
+
+            const estadoRaw = celdas[9]?.innerText || "";
+            const estado = estadoRaw.replace(/\s+/g, " ").trim().toUpperCase();
+
+            // ⚙️ Solo cuenta como pendiente si realmente es activo
             return ["PENDIENTE", "EN PROCESO", "ERROR"].includes(estado);
           });
         });
+
 
         if (!quedanPendientes) {
           logConsole(`✅ Confirmado: no hay más procesos pendientes (intento ${intento}).`, runId);
