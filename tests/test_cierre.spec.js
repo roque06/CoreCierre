@@ -139,12 +139,14 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
     if (!sistemaActivo) {
       logConsole("⏸️ Revalidando posibles nuevas fases...", runId);
 
-      // Espera unos segundos para dar tiempo a que el DOM y backend actualicen
+      // 🔹 Nueva lógica: revisar todas las fases seleccionadas
       let siguenPendientes = false;
+
       for (let intento = 1; intento <= 3; intento++) {
         await page.waitForTimeout(4000);
         await page.reload({ waitUntil: "load" });
 
+        // 🔎 Evalúa la tabla completa
         siguenPendientes = await page.evaluate(() => {
           const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
           return filas.some(tr => {
@@ -154,20 +156,20 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
             const celdas = tr.querySelectorAll("td");
             if (celdas.length < 10) return false;
 
-            const estadoRaw = (celdas[9]?.innerText || "").replace(/\s+/g, " ").trim().toUpperCase();
-            // 🔹 Si el estado está vacío o es "COMPLETADO", no se considera activo
-            if (!estadoRaw || ["COMPLETADO", "FINALIZADO", "T", "OK", "S"].includes(estadoRaw)) return false;
+            const sistema = (celdas[2]?.innerText || "").trim().toUpperCase();
+            const estado = (celdas[9]?.innerText || "").trim().toUpperCase();
 
-            // 🔹 Solo cuenta si es realmente pendiente o en ejecución
-            return ["PENDIENTE", "EN PROCESO", "ERROR"].includes(estadoRaw);
+            // ⚙️ Ignora filas sin badge o con estados finales
+            if (!estado || ["COMPLETADO", "FINALIZADO", "T", "S", "OK"].includes(estado)) return false;
+
+            // ⚙️ Solo cuenta si pertenece a un sistema seleccionado y está activo
+            return ["PENDIENTE", "EN PROCESO", "ERROR"].includes(estado);
           });
         });
 
-
-
         if (!siguenPendientes) {
-          logConsole(`✅ Confirmado: no hay más procesos pendientes (intento ${intento}).`, runId);
-          cierreCompleto = true; // ✅ fuerza salida completa del bucle
+          logConsole(`✅ Confirmado: no hay procesos pendientes (intento ${intento}).`, runId);
+          cierreCompleto = true;
           break;
         }
 
@@ -177,6 +179,7 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
       if (cierreCompleto) break;
       continue;
     }
+
 
     if (sistemaActivo !== ultimoSistemaLogueado) {
       logConsole("==========================================", runId);
