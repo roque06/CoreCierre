@@ -295,7 +295,6 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   // ============================================================
   // 🧩 VALIDACIÓN GLOBAL FINAL
   // ============================================================
-  // 🧩 VALIDACIÓN GLOBAL FINAL (filtrada por fases seleccionadas)
   const quedanPendientes = await page.evaluate((procesosSeleccionados) => {
     const seleccionados = procesosSeleccionados.map(p => p.toUpperCase());
     const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
