@@ -154,13 +154,15 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
             const celdas = tr.querySelectorAll("td");
             if (celdas.length < 10) return false;
 
-            const estadoRaw = celdas[9]?.innerText || "";
-            const estado = estadoRaw.replace(/\s+/g, " ").trim().toUpperCase();
+            const estadoRaw = (celdas[9]?.innerText || "").replace(/\s+/g, " ").trim().toUpperCase();
+            // 🔹 Si el estado está vacío o es "COMPLETADO", no se considera activo
+            if (!estadoRaw || ["COMPLETADO", "FINALIZADO", "T", "OK", "S"].includes(estadoRaw)) return false;
 
-            // 🔹 Solo cuenta como pendiente si realmente está activo
-            return ["PENDIENTE", "EN PROCESO", "ERROR"].includes(estado);
+            // 🔹 Solo cuenta si es realmente pendiente o en ejecución
+            return ["PENDIENTE", "EN PROCESO", "ERROR"].includes(estadoRaw);
           });
         });
+
 
 
         if (!siguenPendientes) {
