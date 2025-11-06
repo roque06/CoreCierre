@@ -108,11 +108,12 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   await navegarConRetries(page, `${ambiente.replace(/\/$/, "")}/ProcesoCierre/Procesar`);
 
   let ultimoSistemaLogueado = null;
+  let cierreCompleto = false; // 🧩 bandera global para salida limpia del bucle
 
   // ============================================================
   // 🔁 BUCLE PRINCIPAL — motor híbrido
   // ============================================================
-  while (true) {
+  while (!cierreCompleto) {
     const filas = page.locator("tbody tr");
     const total = await filas.count();
     let encontrado = false;
@@ -139,11 +140,12 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
       logConsole("⏸️ Revalidando posibles nuevas fases...", runId);
 
       // Espera unos segundos para dar tiempo a que el DOM y backend actualicen
+      let siguenPendientes = false;
       for (let intento = 1; intento <= 3; intento++) {
         await page.waitForTimeout(4000);
         await page.reload({ waitUntil: "load" });
 
-        const quedanPendientes = await page.evaluate(() => {
+        siguenPendientes = await page.evaluate(() => {
           const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
           return filas.some(tr => {
             const style = window.getComputedStyle(tr);
@@ -155,38 +157,21 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
             const estadoRaw = celdas[9]?.innerText || "";
             const estado = estadoRaw.replace(/\s+/g, " ").trim().toUpperCase();
 
-            // ⚙️ Solo cuenta como pendiente si realmente es activo
             return ["PENDIENTE", "EN PROCESO", "ERROR"].includes(estado);
           });
         });
 
-
-        if (!quedanPendientes) {
+        if (!siguenPendientes) {
           logConsole(`✅ Confirmado: no hay más procesos pendientes (intento ${intento}).`, runId);
+          cierreCompleto = true; // ✅ fuerza salida completa del bucle
           break;
         }
 
         logConsole(`⏳ Validación de nuevas fases intento ${intento}: aún hay procesos activos...`, runId);
-
-        // Si es el último intento y aún hay procesos visibles, sigue el bucle
-        if (intento === 3) continue;
       }
 
-      // 🧩 Verificación final fuera del bucle interno
-      const siguePendiente = await page.evaluate(() => {
-        const filas = Array.from(document.querySelectorAll("#myTable tbody tr"));
-        return filas.some(tr => {
-          const estado = tr.querySelectorAll("td")[9]?.innerText.trim().toUpperCase();
-          return ["PENDIENTE", "EN PROCESO", "ERROR"].includes(estado);
-        });
-      });
-
-      if (!siguePendiente) {
-        logConsole("✅ Confirmado: no hay más procesos pendientes. Cierre completado.", runId);
-        break; // ✅ Esto ahora saldrá del while
-      }
-
-      continue; // 🔄 sigue el while si todavía hay algo pendiente
+      if (cierreCompleto) break;
+      continue;
     }
 
     if (sistemaActivo !== ultimoSistemaLogueado) {
@@ -250,7 +235,6 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
           }
         }, 30000);
 
-        // 🧩 Log inmediato al iniciar (para que se vea desde el principio)
         logConsole(`⏳ [${sistema}] ${descripcion} — EN PROCESO (0.0 min transcurridos)`, runId);
 
         const resultado = await ejecutarProceso(page, sistema, baseDatos, connectString, runId);
@@ -271,7 +255,6 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
         encontrado = true;
         break;
       }
-
     }
 
     if (!encontrado) {
@@ -299,9 +282,6 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
       return ["PENDIENTE", "EN PROCESO", "ERROR"].includes(estado);
     });
   });
-
-
-
 
   if (quedanPendientes) {
     logConsole("⏸️ Aún quedan procesos pendientes o en ejecución. No se imprimirá el resumen hasta completar todo.", runId);
@@ -332,7 +312,6 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
       })
     );
 
-
     if (!quedanPendientesFinal) break;
     logConsole(`⏳ Validación final intento ${intento}: aún hay procesos visibles en ejecución...`, runId);
   }
@@ -344,10 +323,6 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   }
 
   logConsole("✅ Todas las fases seleccionadas finalizaron correctamente. Generando resumen final...", runId);
-
-
-
-
 
   // ============================================================
   // 🧾 RESUMEN FINAL
