@@ -258,9 +258,16 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
     }
 
     if (!encontrado) {
+      const hayActivos = await filas.evaluateAll((trs) =>
+        trs.some((tr) => {
+          const estado = tr.querySelectorAll("td")[9]?.innerText.trim();
+          return ["Pendiente", "Error", "En Proceso"].includes(estado);
+        })
+      );
+      if (!hayActivos) break; // 🔹 rompe si ya no hay procesos pendientes
       await page.waitForTimeout(3000);
-      await page.reload({ waitUntil: "load" });
     }
+
   }
 
   // ============================================================
