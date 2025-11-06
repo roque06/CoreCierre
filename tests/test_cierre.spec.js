@@ -264,6 +264,39 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
   }
 
   // ============================================================
+  // 🧩 VALIDACIÓN GLOBAL FINAL (forzada tras salir del bucle principal)
+  // ============================================================
+  let quedanPendientesFinal = true;
+  for (let intento = 1; intento <= 3; intento++) {
+    await page.waitForTimeout(4000); // espera 4 segundos para asegurar actualización del DOM
+    await page.reload({ waitUntil: "load" });
+
+    quedanPendientesFinal = await page.$$eval("#myTable tbody tr", trs =>
+      trs.some(tr => {
+        const celdas = tr.querySelectorAll("td");
+        if (celdas.length < 10) return false;
+        const estado = celdas[9].innerText.trim().toUpperCase();
+        return ["PENDIENTE", "EN PROCESO", "ERROR"].includes(estado);
+      })
+    );
+
+    if (!quedanPendientesFinal) break;
+    logConsole(`⏳ Validación final intento ${intento}: aún hay procesos visibles en ejecución...`, runId);
+  }
+
+  if (quedanPendientesFinal) {
+    logConsole("⏸️ Persisten procesos pendientes tras múltiples verificaciones. No se imprimirá el resumen aún.", runId);
+    await browser.close();
+    return;
+  }
+
+  logConsole("✅ Todas las fases seleccionadas finalizaron correctamente. Generando resumen final...", runId);
+
+
+
+
+
+  // ============================================================
   // 🧾 RESUMEN FINAL
   // ============================================================
   const totalMin = ((Date.now() - inicioCierre) / 60000).toFixed(2);
