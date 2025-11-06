@@ -157,9 +157,11 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
             const estadoRaw = celdas[9]?.innerText || "";
             const estado = estadoRaw.replace(/\s+/g, " ").trim().toUpperCase();
 
+            // 🔹 Solo cuenta como pendiente si realmente está activo
             return ["PENDIENTE", "EN PROCESO", "ERROR"].includes(estado);
           });
         });
+
 
         if (!siguenPendientes) {
           logConsole(`✅ Confirmado: no hay más procesos pendientes (intento ${intento}).`, runId);
