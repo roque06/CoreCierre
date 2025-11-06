@@ -260,8 +260,9 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
         logConsole(`⏳ [${sistema}] ${descripcion} — EN PROCESO (0.0 min transcurridos)`, runId);
 
         const resultado = await ejecutarProceso(page, sistema, baseDatos, connectString, runId);
+        clearInterval(progresoInterval); // detener progreso apenas regresa del proceso interno
         await esperarCompletado(page, descripcion);
-        clearInterval(progresoInterval);
+
 
         const duracion = ((Date.now() - inicioProceso) / 60000).toFixed(2);
         const final = resultado || "Desconocido";
