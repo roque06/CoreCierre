@@ -242,18 +242,27 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
       }
 
       // 🧩 3️⃣ Ejecutar procesos pendientes o con error normalmente
-      // 🧩 3️⃣ Ejecutar procesos pendientes o con error normalmente
       if (["PENDIENTE", "ERROR"].includes(estado.toUpperCase())) {
         const inicioProceso = Date.now();
         logConsole(`▶️ [${sistema}] ${descripcion} — INICIANDO`, runId);
         actualizarEstadoPersistente(claveCache, "EN PROCESO");
 
-        // ❌ elimina el intervalo duplicado
-        // const progresoInterval = setInterval(...);
+        // 🧩 Simular progreso en vivo (seguro y sin depender del DOM)
+        const progresoInterval = setInterval(() => {
+          try {
+            const transcurrido = ((Date.now() - inicioProceso) / 60000).toFixed(1);
+            logConsole(`⏳ [${sistema}] ${descripcion} — EN PROCESO (${transcurrido} min transcurridos)`, runId);
+          } catch (err) {
+            logConsole(`⚠️ Error al calcular progreso de ${descripcion}: ${err.message}`, runId);
+          }
+        }, 30000);
+
+        logConsole(`⏳ [${sistema}] ${descripcion} — EN PROCESO (0.0 min transcurridos)`, runId);
 
         const resultado = await ejecutarProceso(page, sistema, baseDatos, connectString, runId);
+        clearInterval(progresoInterval); // detener progreso apenas regresa del proceso interno
         await esperarCompletado(page, descripcion);
-        // clearInterval(progresoInterval); // ❌ también eliminar
+
 
         const duracion = ((Date.now() - inicioProceso) / 60000).toFixed(2);
         const final = resultado || "Desconocido";
@@ -269,7 +278,6 @@ test(`[${runId}] Cierre con selección de sistemas`, async () => {
         encontrado = true;
         break;
       }
-
     }
 
     if (!encontrado) {
