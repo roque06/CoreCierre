@@ -855,7 +855,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
       // 🧩 Caso especial F4 (FECHA MAYOR)
       // ============================================================
       if (sistema === "F4") {
-        // Leer todas las fechas F4 para comparar
         const fechasF4 = [];
         for (const filaF4 of filas) {
           try {
@@ -865,7 +864,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           } catch { }
         }
 
-        // 🚫 Nueva validación: si todas las fechas F4 son iguales, no activar modo SQL
         if (todasLasFechasSonIguales(fechasF4)) {
           logConsole(`📄 [F4] Todas las fechas F4 son iguales → se omite modo especial.`, runId);
         } else {
@@ -886,15 +884,11 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         }
       }
 
-      // ============================================================
-      // ⛔️ BLOQUE DE SEGURIDAD: evitar clics mientras corre modo especial F4
-      // ============================================================
       if (global.__f4ModoEspecialActivo) {
         logConsole(`⏳ Modo F4 Fecha Mayor activo — se omite clic en "${descripcion}"`, runId);
         continue;
       }
 
-      // =============================== 📦 Ejecutar pre-scripts ===============================
       try {
         if (typeof ejecutarPreScripts === "function") {
           await ejecutarPreScripts(descripcion, baseDatos, runId);
@@ -906,7 +900,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         logConsole(`⚠️ Error ejecutando pre-scripts de ${descripcion}: ${err.message}`, runId);
       }
 
-      // =============================== 🖱️ CLICK EXACTO ===============================
       const filaExacta = await getFilaExacta(page, sistema, descripcion);
       if (!filaExacta) continue;
 
@@ -930,7 +923,11 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
         logConsole(`⚠️ No se detectó modal: ${e.message}`, runId);
       }
 
+      // ✅ FIX agregado aquí
+      estado = "EN PROCESO";
       let ciclos = 0;
+      logConsole(`⏳ [${sistema}] ${descripcion} — EN PROCESO (0.0 min transcurridos)`, runId);
+
       while (true) {
         await page.waitForTimeout(2000);
         const nuevo = await leerEstadoExacto(page, sistema, descripcion);
@@ -941,6 +938,10 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
           break;
         }
         ciclos++;
+        if (ciclos % 30 === 0) {
+          const minutos = ((ciclos * 2) / 60).toFixed(1);
+          logConsole(`⏳ [${sistema}] ${descripcion} — EN PROCESO (${minutos} min transcurridos)`, runId);
+        }
       }
 
       if (estadoFinal === "COMPLETADO") {
@@ -967,8 +968,6 @@ async function ejecutarProceso(page, sistema, baseDatos, connectString, runId = 
 
   return "Completado";
 }
-
-
 
 
 
